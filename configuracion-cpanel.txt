@@ -1,0 +1,16 @@
+# 🌐 CONFIGURACIÓN PARA CONECTAR A CPANEL
+# Copia este contenido a tu archivo .env
+
+# 🗄️ CONEXIÓN A BD DE CPANEL
+DB_HOST=edisons.xyz
+DB_PORT=3306
+DB_USER=eddyyri1_admind
+DB_PASSWORD=TU_PASSWORD_ADMIND_AQUI
+DB_NAME=eddyyri1_ksamati_proyectos
+
+# 🚀 CONFIGURACIÓN DE LA APP
+PORT=5000
+NODE_ENV=development
+CORS_ORIGIN=http://localhost:3000
+APP_NAME=KSAMATI
+APP_VERSION=1.0.0

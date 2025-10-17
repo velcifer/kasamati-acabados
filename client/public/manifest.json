@@ -1,0 +1,59 @@
+{
+  "short_name": "KSAMATI",
+  "name": "KSAMATI - Sistema de Gestión Empresarial",
+  "description": "Plataforma integral para la gestión de tu negocio",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "logo192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "logo512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "theme_color": "#3b82f6",
+  "background_color": "#ffffff",
+  "categories": ["business", "productivity"],
+  "lang": "es",
+  "shortcuts": [
+    {
+      "name": "Gestor de Ventas",
+      "short_name": "Ventas",
+      "description": "Administra tus ventas y clientes",
+      "url": "/ventas",
+      "icons": [{ "src": "/logo192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Gestor de Proyectos",
+      "short_name": "Proyectos",
+      "description": "Gestiona proyectos y tareas",
+      "url": "/proyectos",
+      "icons": [{ "src": "/logo192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Agendar Citas",
+      "short_name": "Citas",
+      "description": "Programa reuniones y citas",
+      "url": "/citas",
+      "icons": [{ "src": "/logo192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Chatbot",
+      "short_name": "Chat",
+      "description": "Asistente virtual inteligente",
+      "url": "/chatbot",
+      "icons": [{ "src": "/logo192.png", "sizes": "192x192" }]
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "name": "ksamati-app",
+  "version": "1.0.0",
+  "description": "Aplicación KSAMATI - Sistema de gestión multiplataforma",
+  "main": "server/index.js",
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "nodemon server/index.js",
+    "client": "cd client && npm start",
+    "build": "cd client && npm run build",
+    "start": "node server/index.js",
+    "install-all": "npm install && cd client && npm install",
+    "setup-db": "node setup-database.js",
+    "setup-db-complete": "node -e \"const mysql=require('mysql2/promise'),fs=require('fs'),path=require('path'); (async()=>{try{const c=await mysql.createConnection({host:process.env.DB_HOST||'localhost',user:process.env.DB_USER||'root',password:process.env.DB_PASSWORD||'',multipleStatements:true}); const sql=fs.readFileSync(path.join(__dirname,'server/database/ksamati_complete_schema.sql'),'utf8'); await c.execute(sql); console.log('✅ BD completa instalada'); await c.end();}catch(e){console.log('❌ Error:', e.message);}})();\"",
+    "setup-db-production": "node -e \"const mysql=require('mysql2/promise'),fs=require('fs'),path=require('path'); (async()=>{try{const c=await mysql.createConnection({host:process.env.DB_HOST||'localhost',user:process.env.DB_USER||'root',password:process.env.DB_PASSWORD||'',multipleStatements:true}); const sql=fs.readFileSync(path.join(__dirname,'server/database/setup-production.sql'),'utf8'); await c.execute(sql); console.log('✅ BD de producción instalada'); await c.end();}catch(e){console.log('❌ Error:', e.message);}})();\"",
+    "verify-db": "node server/database/verify-database.js",
+    "check-db": "node -e \"const mysql=require('mysql2/promise'); (async()=>{try{const c=await mysql.createConnection({host:process.env.DB_HOST||'localhost',user:process.env.DB_USER||'root',password:process.env.DB_PASSWORD||'',database:process.env.DB_NAME||'ksamti_proyectos'}); await c.execute('SELECT COUNT(*) FROM proyectos'); console.log('✅ Base de datos OK'); await c.end();}catch(e){console.log('❌ BD no configurada:', e.message);}})();\"" 
+  },
+  "dependencies": {
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "helmet": "^7.1.0",
+    "mysql2": "^3.14.4"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.0.2"
+  },
+  "keywords": [
+    "react",
+    "nodejs",
+    "tailwindcss",
+    "multiplataforma",
+    "responsive"
+  ],
+  "author": "KSAMATI",
+  "license": "MIT"
+}

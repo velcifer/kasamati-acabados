@@ -1,0 +1,44 @@
+{
+  "name": "ksamati-production",
+  "version": "1.0.0",
+  "description": "KSAMATI - Sistema de gestión empresarial para cPanel",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "setup-db": "node server/database/verify-database.js",
+    "test-db": "node -e \"require('./server/config/database').testConnection()\"",
+    "health": "node -e \"const http=require('http'); http.get('http://localhost:3000/api/health', (r)=>{let d=''; r.on('data',c=>d+=c); r.on('end',()=>console.log(d))})\"",
+    "logs": "tail -f ~/logs/*_error.log"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "compression": "^1.7.4",
+    "helmet": "^7.1.0",
+    "mysql2": "^3.14.4"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  },
+  "keywords": [
+    "ksamati",
+    "nodejs",
+    "express",
+    "mysql",
+    "cpanel",
+    "production",
+    "business-management"
+  ],
+  "author": "KSAMATI Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "private"
+  },
+  "bugs": {
+    "url": "mailto:soporte@tu-dominio.com"
+  },
+  "homepage": "https://tu-dominio.com"
+}
