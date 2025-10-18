@@ -140,15 +140,19 @@ app.use((req, res) => {
 });
 
 // 🚀 INICIAR SERVIDOR
-const server = app.listen(PORT, async () => {
-  console.log('\n🚀 ===================================');
-  console.log('   KSAMATI - SISTEMA EMPRESARIAL');
-  console.log('   ===================================');
-  console.log(`📡 Servidor: http://localhost:${PORT}`);
-  console.log(`🌍 Entorno: ${process.env.NODE_ENV || 'production'}`);
-  console.log(`📅 Iniciado: ${new Date().toLocaleString()}`);
-  
-  // 🔍 PROBAR CONEXIÓN A BASE DE DATOS
+if (process.env.NODE_ENV !== 'production') {
+  // En desarrollo (local)
+  const PORT = process.env.PORT || 3000;
+  const server = app.listen(PORT, async () => {
+    console.log('\n🚀 ===================================');
+    console.log('   KSAMATI - SISTEMA EMPRESARIAL');
+    console.log('   ===================================');
+    console.log(`📡 Servidor: http://localhost:${PORT}`);
+    console.log(`🌍 Entorno: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`📅 Iniciado: ${new Date().toLocaleString()}`);
+    console.log('\n🎯 Aplicación lista para usar!');
+  });
+   // 🔍 PROBAR CONEXIÓN A BASE DE DATOS
   console.log('\n🔗 Probando conexión a base de datos...');
   const dbConnected = await testConnection();
   
@@ -161,7 +165,7 @@ const server = app.listen(PORT, async () => {
   
   console.log('\n🎯 Aplicación lista para usar!');
   console.log('===============================\n');
-});
+}
 
 // 🛑 MANEJO GRACEFUL DE SHUTDOWN
 process.on('SIGTERM', () => {
