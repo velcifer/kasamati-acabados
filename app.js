@@ -141,30 +141,30 @@ app.use((req, res) => {
 
 // 🚀 INICIAR SERVIDOR
 if (process.env.NODE_ENV !== 'production') {
-  // En desarrollo (local)
+  // Modo local: ejecuta servidor en puerto 3000
   const PORT = process.env.PORT || 3000;
-  const server = app.listen(PORT, async () => {
+  app.listen(PORT, async () => {
     console.log('\n🚀 ===================================');
     console.log('   KSAMATI - SISTEMA EMPRESARIAL');
     console.log('   ===================================');
     console.log(`📡 Servidor: http://localhost:${PORT}`);
     console.log(`🌍 Entorno: ${process.env.NODE_ENV || 'development'}`);
     console.log(`📅 Iniciado: ${new Date().toLocaleString()}`);
+
+    // 🔍 Prueba conexión DB
+    console.log('\n🔗 Probando conexión a base de datos...');
+    const dbConnected = await testConnection();
+    if (dbConnected) {
+      console.log('✅ Base de datos conectada correctamente');
+    } else {
+      console.log('⚠️ No se pudo conectar a la base de datos');
+    }
     console.log('\n🎯 Aplicación lista para usar!');
   });
-   // 🔍 PROBAR CONEXIÓN A BASE DE DATOS
-  console.log('\n🔗 Probando conexión a base de datos...');
-  const dbConnected = await testConnection();
-  
-  if (dbConnected) {
-    console.log('✅ Base de datos conectada correctamente');
-  } else {
-    console.log('⚠️ Warning: No se pudo conectar a la base de datos');
-    console.log('   La aplicación funcionará con funcionalidad limitada');
-  }
-  
-  console.log('\n🎯 Aplicación lista para usar!');
-  console.log('===============================\n');
+} else {
+  // Modo producción (cPanel/Passenger)
+  console.log('🌐 Modo producción: exportando app para Passenger');
+  testConnection().then(() => console.log('✅ Base de datos conectada'));
 }
 
 // 🛑 MANEJO GRACEFUL DE SHUTDOWN
