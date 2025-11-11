@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { XMarkIcon, DocumentIcon } from '@heroicons/react/24/outline';
+import { localStorageAPI } from '../../services/localStorage';
 import { useProjectDetail } from '../../hooks/useProjectData';
 import { PencilIcon, DocumentArrowUpIcon, FolderIcon, EyeIcon } from '@heroicons/react/24/solid';
 
@@ -8,6 +9,9 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
   const [currentFile, setCurrentFile] = useState(null);
   const [documentosPopupOpen, setDocumentosPopupOpen] = useState(false);
   const fileInputRef = useRef(null);
+  const [archivosAdjuntos, setArchivosAdjuntos] = useState([]);
+  const [dragActive, setDragActive] = useState(false);
+  const [saveStatus, setSaveStatus] = useState(null); // null | 'saving' | 'saved' | 'error' | 'syncing'
 
   // 🎯 SISTEMA DE AUTO-SYNC CON EXCEL PRINCIPAL
   const { project, loading, updateField, updateCategory, addCategory, totales } = useProjectDetail(projectNumber);
@@ -122,7 +126,12 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
   const handleCategoriaChange = (categoriaId, field, value) => {
     // Sistema de auto-sync: cualquier cambio se guarda automáticamente
     if (updateCategory) {
-      updateCategory(categoriaId, { [field]: value });
+      // Sanitizar valores monetarios antes de enviarlos al servicio
+      const monetaryKeys = ['presupuestoDelProyecto', 'contratoProvedYServ', 'registroEgresos', 'saldosPorCancelar'];
+      const processed = monetaryKeys.includes(field)
+        ? (parseFloat(String(value).replace(/[^0-9.-]/g, '')) || 0)
+        : value;
+      updateCategory(categoriaId, { [field]: processed });
     }
 
     // Mantener compatibilidad con estado local
@@ -144,12 +153,19 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
         saldos: 0
       };
     }
+    const sanitize = (v) => {
+      if (v === undefined || v === null) return 0;
+      try {
+        const s = String(v).replace(/[^0-9.-]/g, '');
+        return parseFloat(s) || 0;
+      } catch (e) { return 0; }
+    };
 
     return projectData.categorias.reduce((totales, categoria) => {
-      const presupuesto = parseFloat(categoria.presupuestoDelProyecto) || 0;
-      const contrato = parseFloat(categoria.contratoProvedYServ) || 0;
-      const egresos = parseFloat(categoria.registroEgresos) || 0;
-      const saldos = parseFloat(categoria.saldosPorCancelar) || 0;
+      const presupuesto = sanitize(categoria.presupuestoDelProyecto);
+      const contrato = sanitize(categoria.contratoProvedYServ);
+      const egresos = sanitize(categoria.registroEgresos);
+      const saldos = sanitize(categoria.saldosPorCancelar);
 
       return {
         presupuesto: totales.presupuesto + presupuesto,
@@ -395,8 +411,9 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     }
   }, [project]); // Se ejecuta cada vez que el proyecto del servicio cambie
 
-  const openViewer = (file) => {
-    setCurrentFile(file);
+  const openViewer = (item) => {
+    // item es el objeto que contiene { file, url, name, type }
+    setCurrentFile(item);
     setViewerOpen(true);
   };
 
@@ -405,13 +422,256 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     setCurrentFile(null);
   };
 
+  const addFiles = (filesList) => {
+    const allowed = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+    const files = Array.from(filesList || []).filter(f => allowed.includes(f.type));
+
+    if (files.length === 0) return;
+
+    setArchivosAdjuntos(prev => {
+      const available = Math.max(0, 4 - prev.length);
+      const toAdd = files.slice(0, available).map(f => ({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
+        file: f,
+        name: f.name,
+        size: f.size,
+        type: f.type,
+        url: URL.createObjectURL(f)
+      }));
+
+      return [...prev, ...toAdd];
+    });
+  };
+
   const handleFileSelect = (event) => {
     const files = event.target.files;
-    if (files && files.length > 0) {
-      console.log('Archivos seleccionados:', files);
-      // Aquí puedes agregar la lógica para manejar los archivos
+    addFiles(files);
+    // reset input so same file can be selected again
+    if (fileInputRef.current) fileInputRef.current.value = null;
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) addFiles(files);
+  };
+
+  const removeFile = (id) => {
+    setArchivosAdjuntos(prev => {
+      const found = prev.find(p => p.id === id);
+      if (found) URL.revokeObjectURL(found.url);
+  const next = prev.filter(p => p.id !== id);
+      // eliminar de localStorage si existe
+      try {
+        const key = `ksamti_attachments_${projectNumber}`;
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const arr = JSON.parse(raw);
+          const filtered = arr.filter(a => a.id !== id);
+          localStorage.setItem(key, JSON.stringify(filtered));
+        }
+      } catch (e) { /* ignore */ }
+  return next;
+    });
+  };
+
+  const downloadFile = (item) => {
+    const a = document.createElement('a');
+    a.href = item.url;
+    a.download = item.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  // Clean up object URLs on unmount
+  useEffect(() => {
+    return () => {
+      archivosAdjuntos.forEach(a => URL.revokeObjectURL(a.url));
+    };
+  }, [archivosAdjuntos]);
+
+  // --- Persistencia local: convertir archivo a DataURL y guardar en localStorage por proyecto ---
+  // IndexedDB based persistence
+  const saveAttachmentsToLocal = async () => {
+    if (!projectNumber) return;
+    setSaveStatus('saving');
+    try {
+      const key = `ksamti_attachments_${projectNumber}`;
+      // convertir a dataURL para guardar en localStorage
+      const payload = await Promise.all(archivosAdjuntos.map(async item => ({
+        id: item.id,
+        name: item.name,
+        size: item.size,
+        type: item.type,
+        dataUrl: await new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => res(r.result);
+          r.onerror = rej;
+          r.readAsDataURL(item.file instanceof Blob ? item.file : new Blob([item.file]));
+        }),
+        uploaded: false,
+        savedAt: new Date().toISOString()
+      })));
+
+      localStorage.setItem(key, JSON.stringify(payload));
+
+      // Guardar también los datos del proyecto en localStorage para persistencia completa
+      try {
+        const projectsKey = 'ksamti_proyectos';
+        const projects = JSON.parse(localStorage.getItem(projectsKey) || '{}');
+        projects[projectNumber] = { ...(projects[projectNumber] || {}), ...projectData };
+        localStorage.setItem(projectsKey, JSON.stringify(projects));
+      } catch (e) {
+        console.warn('No se pudo guardar los datos del proyecto en localStorage:', e);
+      }
+      setSaveStatus('saved');
+      setTimeout(() => trySyncAttachments(), 1000);
+      return { success: true };
+    } catch (error) {
+      console.error('Error guardando attachments en IndexedDB:', error);
+      setSaveStatus('error');
+      return { success: false, error };
     }
   };
+
+  const loadAttachmentsFromLocal = async () => {
+    if (!projectNumber) return;
+    try {
+      const key = `ksamti_attachments_${projectNumber}`;
+      const raw = localStorage.getItem(key);
+      if (!raw) return;
+      const list = JSON.parse(raw);
+      const reconstructed = list.map(item => {
+        const blob = (function(dataUrl){
+          const arr = dataUrl.split(',');
+          const mime = arr[0].match(/:(.*?);/)[1];
+          const bstr = atob(arr[1]);
+          let n = bstr.length;
+          const u8arr = new Uint8Array(n);
+          while (n--) u8arr[n] = bstr.charCodeAt(n);
+          return new Blob([u8arr], { type: mime });
+        })(item.dataUrl);
+        const url = URL.createObjectURL(blob);
+        return { id: item.id, name: item.name, size: item.size, type: item.type, file: blob, url };
+      });
+      setArchivosAdjuntos(reconstructed);
+      setSaveStatus('saved');
+    } catch (error) {
+      console.warn('No hay attachments en IndexedDB o falló la carga:', error);
+    }
+  };
+
+  // Intento básico de sincronización con backend (plantilla)
+  const trySyncAttachments = async () => {
+    if (!projectNumber) return;
+    setSaveStatus('syncing');
+    try {
+      // Comprobar endpoint health
+      const health = await fetch('/api/health').then(r => r.ok).catch(() => false);
+      if (!health) {
+        console.warn('Servidor no disponible para sincronizar attachments');
+        setSaveStatus('saved');
+        return;
+      }
+
+      // Cargar localmente guardados
+  const key = `ksamti_attachments_${projectNumber}`;
+  const raw = localStorage.getItem(key);
+  if (!raw) { setSaveStatus('saved'); return; }
+  const list = JSON.parse(raw);
+
+      // Enviar cada archivo como FormData a un endpoint (ajustar ruta según backend)
+      for (const item of list) {
+  if (item.uploaded) continue;
+  const fd = new FormData();
+  // si está en dataUrl -> reconstruir blob
+  const blob = item.file instanceof Blob ? item.file : (function(dataUrl){ const arr = dataUrl.split(','); const mime = arr[0].match(/:(.*?);/)[1]; const bstr = atob(arr[1]); let n = bstr.length; const u8arr = new Uint8Array(n); while (n--) u8arr[n] = bstr.charCodeAt(n); return new Blob([u8arr], { type: mime }); })(item.dataUrl || item.file);
+  fd.append('file', blob, item.name);
+        fd.append('meta', JSON.stringify({ name: item.name, size: item.size, type: item.type }));
+
+        try {
+          const res = await fetch(`/api/proyectos/${projectNumber}/archivos`, { method: 'POST', body: fd });
+          if (res.ok) {
+            // marcar como subido en localStorage
+            try {
+              const raw2 = localStorage.getItem(key);
+              if (raw2) {
+                const arr2 = JSON.parse(raw2);
+                const mapped = arr2.map(a => a.id === item.id ? { ...a, uploaded: true } : a);
+                localStorage.setItem(key, JSON.stringify(mapped));
+              }
+            } catch (e) { /* ignore */ }
+          }
+        } catch (err) {
+          console.warn('Error subiendo archivo al servidor:', err);
+        }
+      }
+
+  // Guardado actualizado ya en IndexedDB
+      setSaveStatus('saved');
+    } catch (error) {
+      console.error('Error sincronizando attachments:', error);
+      setSaveStatus('error');
+    }
+  };
+
+  // Cargar attachments locales cuando cambia el proyecto
+  useEffect(() => {
+    // Cargar attachments guardados
+    loadAttachmentsFromLocal();
+
+    // Cargar datos del proyecto guardados (si existen) y fusionarlos con el estado actual
+    try {
+      const projectsKey = 'ksamti_proyectos';
+      const projects = JSON.parse(localStorage.getItem(projectsKey) || '{}');
+      const saved = projects[projectNumber];
+      if (saved) {
+        setProjectData(prev => ({ ...prev, ...saved }));
+        // también sincronizar con el servicio si existe
+        if (updateField) {
+          Object.keys(saved).forEach(k => {
+            try { updateField(k, saved[k]); } catch (e) { /* ignore */ }
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('No se pudo cargar projectData desde localStorage', e);
+    }
+
+  }, [projectNumber]);
+
+  // Guardado automático de projectData en localStorage (debounce)
+  useEffect(() => {
+    if (!projectNumber) return;
+    // debounce para evitar escrituras continuas
+    const t = setTimeout(() => {
+      try {
+        const projectsKey = 'ksamti_proyectos';
+        const projects = JSON.parse(localStorage.getItem(projectsKey) || '{}');
+        projects[projectNumber] = { ...(projects[projectNumber] || {}), ...projectData };
+        localStorage.setItem(projectsKey, JSON.stringify(projects));
+      } catch (e) {
+        console.warn('No se pudo guardar projectData automáticamente en localStorage', e);
+      }
+    }, 800);
+
+    return () => clearTimeout(t);
+  }, [projectNumber, projectData]);
 
   // Estado para manejar los proveedores y sus pagos
   const [proveedores, setProveedores] = useState([
@@ -1086,15 +1346,27 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
           <div className="bg-white rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
             {/* Header naranja del popup */}
             <div className="bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-3 rounded-t-lg flex justify-between items-center">
-              <div className="flex items-center">
+              <div className="flex items-center gap-3">
                 <span className="text-white font-bold text-lg">📄 DOCUMENTOS DEL PROYECTO</span>
+                {saveStatus === 'saving' && <span className="text-sm text-yellow-100">Guardando...</span>}
+                {saveStatus === 'saved' && <span className="text-sm text-green-100">Guardado localmente</span>}
+                {saveStatus === 'syncing' && <span className="text-sm text-blue-100">Sincronizando...</span>}
+                {saveStatus === 'error' && <span className="text-sm text-red-100">Error guardando</span>}
               </div>
-              <button
-                onClick={() => setDocumentosPopupOpen(false)}
-                className="text-white hover:text-orange-200 transition-colors"
-              >
-                <XMarkIcon className="h-6 w-6" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={saveAttachmentsToLocal}
+                  className="bg-white text-orange-600 px-3 py-1 rounded-md font-semibold hover:bg-gray-100"
+                >
+                  Guardar
+                </button>
+                <button
+                  onClick={() => setDocumentosPopupOpen(false)}
+                  className="text-white hover:text-orange-200 transition-colors"
+                >
+                  <XMarkIcon className="h-6 w-6" />
+                </button>
+              </div>
             </div>
             
             <div className="text-white bg-orange-500 px-4 py-1 text-sm">
@@ -1244,15 +1516,19 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
               
               {/* Área de arrastrar archivos */}
               <div className="bg-gray-800 rounded-b-lg p-6">
-                <div className="border-2 border-dashed border-gray-500 rounded-lg p-8 text-center text-white">
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`border-2 border-dashed rounded-lg p-8 text-center text-white transition-all ${dragActive ? 'border-red-400 bg-red-500/10' : 'border-gray-500'}`}
+                >
                   <div className="mb-4">
-                    <div className="w-12 h-12 mx-auto mb-4 text-4xl">
-                      📎
-                    </div>
+                    <div className="w-12 h-12 mx-auto mb-4 text-4xl">📎</div>
                     <p className="text-white mb-2">Arrastra archivos aquí o haz clic para seleccionar (1-4 archivos máximo)</p>
                     <p className="text-gray-400 text-sm">Formatos: PDF, JPG, PNG, GIF, WEBP</p>
                   </div>
-                  
+
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -1261,7 +1537,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     onChange={handleFileSelect}
                     className="hidden"
                   />
-                  
+
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     className="bg-red-600 hover:bg-red-700 text-white px-6 py-2 rounded-lg font-bold transition-colors"
@@ -1269,6 +1545,43 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     📷 ADJUNTAR FOTO
                   </button>
                 </div>
+
+                {/* Mini-grilla de archivos adjuntos */}
+                {archivosAdjuntos.length > 0 && (
+                  <div className="mt-4">
+                    <h5 className="text-white font-medium text-sm mb-2">Archivos adjuntos ({archivosAdjuntos.length}/4):</h5>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {archivosAdjuntos.map(item => (
+                        <div key={item.id} className="bg-white/10 rounded-lg p-3 flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-gray-700 rounded flex items-center justify-center text-sm text-white overflow-hidden">
+                              {item.type.startsWith('image/') ? (
+                                <img src={item.url} alt={item.name} className="w-full h-full object-cover" />
+                              ) : (
+                                <DocumentIcon className="h-6 w-6 text-white" />
+                              )}
+                            </div>
+                            <div className="text-left">
+                              <div className="text-sm font-medium text-white truncate" style={{maxWidth: 220}}>{item.name}</div>
+                              <div className="text-xs text-gray-300">{(item.size/1024).toFixed(1)} KB</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => openViewer(item)} title="Ver" className="bg-blue-600 hover:bg-blue-700 text-white rounded p-2 text-xs">
+                              <EyeIcon className="h-4 w-4" />
+                            </button>
+                            <button onClick={() => downloadFile(item)} title="Descargar" className="bg-green-600 hover:bg-green-700 text-white rounded p-2 text-xs">
+                              ⬇
+                            </button>
+                            <button onClick={() => removeFile(item.id)} title="Eliminar" className="bg-red-600 hover:bg-red-700 text-white rounded p-2 text-xs">
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1281,26 +1594,28 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
           <div className="bg-white rounded-lg shadow-xl max-w-4xl max-h-[90vh] w-full m-4 flex flex-col">
             {/* Header del viewer */}
             <div className="flex justify-between items-center p-4 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-800">
-                📄 {currentFile.name}
-              </h3>
-              <button
-                onClick={closeViewer}
-                className="text-gray-500 hover:text-gray-700 transition-colors"
-              >
-                <XMarkIcon className="h-6 w-6" />
-              </button>
+              <h3 className="text-lg font-semibold text-gray-800">📄 {currentFile.name}</h3>
+              <div className="flex items-center gap-2">
+                <button onClick={() => downloadFile(currentFile)} className="text-sm text-blue-600 hover:underline">Descargar</button>
+                <button onClick={closeViewer} className="text-gray-500 hover:text-gray-700 transition-colors">
+                  <XMarkIcon className="h-6 w-6" />
+                </button>
               </div>
+            </div>
 
-            {/* Contenido del viewer */}
+            {/* Contenido del viewer: imagen o PDF embebido */}
             <div className="flex-1 p-4 overflow-auto bg-gray-50 flex items-center justify-center">
-              <div className="text-center text-gray-600">
-                <DocumentIcon className="h-16 w-16 mx-auto mb-4 text-gray-400" />
-                <p className="text-lg font-medium">Vista previa de {currentFile.name}</p>
-                <p className="text-sm text-gray-600 mt-2">
-                  Vista previa de archivos en desarrollo...
-                </p>
-              </div>
+              {currentFile.type && currentFile.type.startsWith('image/') ? (
+                <img src={currentFile.url} alt={currentFile.name} className="max-w-full max-h-[75vh] object-contain" />
+              ) : currentFile.type === 'application/pdf' ? (
+                <iframe src={currentFile.url} title={currentFile.name} className="w-full h-[75vh] border-0" />
+              ) : (
+                <div className="text-center text-gray-600">
+                  <DocumentIcon className="h-16 w-16 mx-auto mb-4 text-gray-400" />
+                  <p className="text-lg font-medium">Vista previa de {currentFile.name}</p>
+                  <p className="text-sm text-gray-600 mt-2">Tipo de archivo no previsualizable. Puedes descargarlo.</p>
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -270,6 +270,8 @@ class ProjectDataService {
   // 🆕 CREAR NUEVO PROYECTO
   createProject(projectData) {
     const newId = Math.max(...Object.keys(this.projects).map(Number)) + 1;
+    // Asegurar categorías por defecto si no se proporcionan
+    const defaultCategories = this.getInitialProjects()[1].categorias;
     const newProject = {
       id: newId,
       nombreProyecto: projectData.nombreProyecto || `Proyecto ${newId}`,
@@ -288,12 +290,16 @@ class ProjectDataService {
       adelantos: 0,
       saldoXCobrar: 0,
       creditoFiscal: 0,
-      categorias: [],
+      categorias: (projectData.categorias && projectData.categorias.length > 0) ? projectData.categorias : [...defaultCategories],
       lastUpdated: new Date().toISOString(),
       ...projectData
     };
 
     this.projects[newId] = newProject;
+
+    // Calcular fórmulas iniciales para que los totales se muestren inmediatamente
+    this.calculateFormulas(newId);
+
     this.saveToLocalStorage();
     this.notifyListeners();
     return newProject;

@@ -88,10 +88,11 @@ try {
 
 // 🎨 SERVIR ARCHIVOS ESTÁTICOS DEL FRONTEND
 // En cPanel, los archivos del build de React estarán en la raíz de public_html
-app.use(express.static(path.join(__dirname), {
+app.use(express.static(path.join(__dirname, 'client', 'build'), {
   maxAge: '1d',
   etag: false
 }));
+
 
 // 🎯 RUTA CATCH-ALL PARA REACT ROUTER
 // Esto permite que las rutas de React funcionen correctamente
@@ -102,7 +103,7 @@ app.get('*', (req, res, next) => {
   }
   
   // Servir index.html para todas las demás rutas
-  res.sendFile(path.join(__dirname, 'index.html'), (err) => {
+  res.sendFile(path.join(__dirname, 'client', 'build', 'index.html'), (err) => {
     if (err) {
       console.error('Error sirviendo index.html:', err);
       res.status(404).send('Página no encontrada');
@@ -140,32 +141,28 @@ app.use((req, res) => {
 });
 
 // 🚀 INICIAR SERVIDOR
-if (process.env.NODE_ENV !== 'production') {
-  // Modo local: ejecuta servidor en puerto 3000
-  const PORT = process.env.PORT || 3000;
-  app.listen(PORT, async () => {
-    console.log('\n🚀 ===================================');
-    console.log('   KSAMATI - SISTEMA EMPRESARIAL');
-    console.log('   ===================================');
-    console.log(`📡 Servidor: http://localhost:${PORT}`);
-    console.log(`🌍 Entorno: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`📅 Iniciado: ${new Date().toLocaleString()}`);
-
-    // 🔍 Prueba conexión DB
-    console.log('\n🔗 Probando conexión a base de datos...');
-    const dbConnected = await testConnection();
-    if (dbConnected) {
-      console.log('✅ Base de datos conectada correctamente');
-    } else {
-      console.log('⚠️ No se pudo conectar a la base de datos');
-    }
-    console.log('\n🎯 Aplicación lista para usar!');
-  });
-} else {
-  // Modo producción (cPanel/Passenger)
-  console.log('🌐 Modo producción: exportando app para Passenger');
-  testConnection().then(() => console.log('✅ Base de datos conectada'));
-}
+const server = app.listen(PORT, async () => {
+  console.log('\n🚀 ===================================');
+  console.log('   KSAMATI - SISTEMA EMPRESARIAL');
+  console.log('   ===================================');
+  console.log(`📡 Servidor: http://localhost:${PORT}`);
+  console.log(`🌍 Entorno: ${process.env.NODE_ENV || 'production'}`);
+  console.log(`📅 Iniciado: ${new Date().toLocaleString()}`);
+  
+  // 🔍 PROBAR CONEXIÓN A BASE DE DATOS
+  console.log('\n🔗 Probando conexión a base de datos...');
+  const dbConnected = await testConnection();
+  
+  if (dbConnected) {
+    console.log('✅ Base de datos conectada correctamente');
+  } else {
+    console.log('⚠️ Warning: No se pudo conectar a la base de datos');
+    console.log('   La aplicación funcionará con funcionalidad limitada');
+  }
+  
+  console.log('\n🎯 Aplicación lista para usar!');
+  console.log('===============================\n');
+});
 
 // 🛑 MANEJO GRACEFUL DE SHUTDOWN
 process.on('SIGTERM', () => {
