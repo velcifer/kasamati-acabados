@@ -108,6 +108,38 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     ]
   });
 
+  // Helpers para persistencia local: soportar ambas claves usadas en el proyecto
+  const saveProjectToLocalStores = (projNum, data) => {
+    try {
+      const keyA = 'ksamti_proyectos'; // antigua/cliente
+      const keyB = 'ksamati_projects'; // servicio
+
+      const a = JSON.parse(localStorage.getItem(keyA) || '{}');
+      a[projNum] = { ...(a[projNum] || {}), ...data };
+      localStorage.setItem(keyA, JSON.stringify(a));
+
+      const b = JSON.parse(localStorage.getItem(keyB) || '{}');
+      b[projNum] = { ...(b[projNum] || {}), ...data };
+      localStorage.setItem(keyB, JSON.stringify(b));
+    } catch (e) {
+      console.warn('No se pudo guardar projectData en localStores:', e);
+    }
+  };
+
+  const loadProjectFromLocalStores = (projNum) => {
+    try {
+      const keyA = 'ksamti_proyectos';
+      const keyB = 'ksamati_projects';
+      const a = JSON.parse(localStorage.getItem(keyA) || '{}');
+      if (a && a[projNum]) return a[projNum];
+      const b = JSON.parse(localStorage.getItem(keyB) || '{}');
+      if (b && b[projNum]) return b[projNum];
+    } catch (e) {
+      console.warn('Error cargando projectData desde localStores', e);
+    }
+    return null;
+  };
+
   // 🔄 AUTO-SAVE: Handler para campos del proyecto (nuevo sistema)
   const handleInputChange = (field, value) => {
     // Sistema de auto-sync: cualquier cambio se guarda automáticamente
@@ -530,15 +562,8 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
 
       localStorage.setItem(key, JSON.stringify(payload));
 
-      // Guardar también los datos del proyecto en localStorage para persistencia completa
-      try {
-        const projectsKey = 'ksamti_proyectos';
-        const projects = JSON.parse(localStorage.getItem(projectsKey) || '{}');
-        projects[projectNumber] = { ...(projects[projectNumber] || {}), ...projectData };
-        localStorage.setItem(projectsKey, JSON.stringify(projects));
-      } catch (e) {
-        console.warn('No se pudo guardar los datos del proyecto en localStorage:', e);
-      }
+  // Guardar también los datos del proyecto en localStorage (ambas claves)
+  saveProjectToLocalStores(projectNumber, projectData);
       setSaveStatus('saved');
       setTimeout(() => trySyncAttachments(), 1000);
       return { success: true };
@@ -637,9 +662,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
 
     // Cargar datos del proyecto guardados (si existen) y fusionarlos con el estado actual
     try {
-      const projectsKey = 'ksamti_proyectos';
-      const projects = JSON.parse(localStorage.getItem(projectsKey) || '{}');
-      const saved = projects[projectNumber];
+      const saved = loadProjectFromLocalStores(projectNumber);
       if (saved) {
         setProjectData(prev => ({ ...prev, ...saved }));
         // también sincronizar con el servicio si existe
@@ -661,10 +684,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     // debounce para evitar escrituras continuas
     const t = setTimeout(() => {
       try {
-        const projectsKey = 'ksamti_proyectos';
-        const projects = JSON.parse(localStorage.getItem(projectsKey) || '{}');
-        projects[projectNumber] = { ...(projects[projectNumber] || {}), ...projectData };
-        localStorage.setItem(projectsKey, JSON.stringify(projects));
+    saveProjectToLocalStores(projectNumber, projectData);
       } catch (e) {
         console.warn('No se pudo guardar projectData automáticamente en localStorage', e);
       }
