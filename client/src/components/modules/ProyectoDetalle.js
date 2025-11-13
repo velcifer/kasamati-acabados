@@ -5,6 +5,15 @@ import { useProjectDetail } from '../../hooks/useProjectData';
 import { PencilIcon, DocumentArrowUpIcon, FolderIcon, EyeIcon } from '@heroicons/react/24/solid';
 
 const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
+  // Util: parsear valores monetarios (acepta string con símbolos o números)
+  const parseMonetary = (v) => {
+    if (v === undefined || v === null) return 0;
+    if (typeof v === 'number') return v;
+    try {
+      const s = String(v).replace(/[^0-9.-]/g, '');
+      return parseFloat(s) || 0;
+    } catch (e) { return 0; }
+  };
   const [viewerOpen, setViewerOpen] = useState(false);
   const [currentFile, setCurrentFile] = useState(null);
   const [documentosPopupOpen, setDocumentosPopupOpen] = useState(false);
@@ -108,6 +117,49 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     ]
   });
 
+  // Helper para formatear dinero como muestra la UI
+  const formatMoney = (v) => {
+    const num = parseMonetary(v);
+    return `$/ ${Number.isFinite(num) ? num.toFixed(2) : '0.00'}`;
+  };
+
+  // Sincronizar estado local con cambios del servicio (project)
+  useEffect(() => {
+    if (!project) return;
+
+    try {
+      setProjectData(prev => {
+        const mappedCategorias = (project.categorias || []).map(cat => ({
+          id: cat.id,
+          nombre: cat.nombre || '',
+          tipo: cat.tipo || '',
+          presupuestoDelProyecto: formatMoney(cat.presupuestoDelProyecto || 0),
+          contratoProvedYServ: formatMoney(cat.contratoProvedYServ || 0),
+          registroEgresos: formatMoney(cat.registroEgresos || 0),
+          saldosPorCancelar: formatMoney(cat.saldosPorCancelar || 0)
+        }));
+
+        return {
+          ...prev,
+          nombreProyecto: project.nombreProyecto || prev.nombreProyecto,
+          nombreCliente: project.nombreCliente || prev.nombreCliente,
+          montoContrato: formatMoney(project.montoContrato || 0),
+          adelantos: formatMoney(project.adelantos || 0),
+          presupuestoDelProyecto: formatMoney(project.presupuestoProyecto || 0),
+          utilidadEstimadaSinFactura: formatMoney(project.utilidadEstimadaSinFactura || 0),
+          utilidadEstimadaConFactura: formatMoney(project.utilidadEstimadaConFactura || 0),
+          totalContratoProveedores: formatMoney(project.totalContratoProveedores || 0),
+          totalSaldoPorPagarProveedores: formatMoney(project.totalSaldoPorPagarProveedores || 0),
+          balanceDeComprasDelProyecto: formatMoney(project.balanceDeComprasDelProyecto || 0),
+          cobranzas: Array.isArray(project.cobranzas) ? project.cobranzas.map(c => ({ ...c })) : prev.cobranzas,
+          categorias: mappedCategorias
+        };
+      });
+    } catch (e) {
+      console.warn('Error sincronizando projectData desde servicio', e);
+    }
+  }, [project]);
+
   // Helpers para persistencia local: soportar ambas claves usadas en el proyecto
   const saveProjectToLocalStores = (projNum, data) => {
     try {
@@ -152,6 +204,14 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
         ...prev,
         [field]: value
     }));
+
+    // Persistencia redundante: guardar en localStores para asegurar último estado
+    try {
+      const numeric = (typeof value === 'number') ? value : parseMonetary(value);
+      saveProjectToLocalStores(projectNumber, { [field]: numeric });
+    } catch (e) {
+      /* ignore */
+    }
   };
 
   // 🔄 AUTO-SAVE: Handler para categorías (nuevo sistema)
@@ -173,6 +233,17 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
         cat.id === categoriaId ? { ...cat, [field]: value } : cat
       )
     }));
+
+    // Persistencia redundante: guardar categoría actualizada en localStores
+    try {
+      const monetaryKeys = ['presupuestoDelProyecto', 'contratoProvedYServ', 'registroEgresos', 'saldosPorCancelar'];
+      const processed = monetaryKeys.includes(field) ? (parseFloat(String(value).replace(/[^0-9.-]/g, '')) || 0) : value;
+      // Guardar solo la categoría modificada en el project store
+      const key = `categoria_${categoriaId}`;
+      saveProjectToLocalStores(projectNumber, { categorias: { [categoriaId]: { [field]: processed } } });
+    } catch (e) {
+      /* ignore */
+    }
   };
 
   // 🧮 FUNCIÓN DE TOTALES AUTOMÁTICOS (como Excel)
@@ -211,8 +282,8 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
   // 🧮 FÓRMULAS AUTOMÁTICAS DEL ANÁLISIS FINANCIERO
   const calcularAnalisisFinanciero = () => {
     const totales = calcularTotales();
-    const montoContrato = parseFloat(projectData.montoContrato?.replace(/[^0-9.-]/g, '')) || 0;
-    const presupuestoProyecto = parseFloat(projectData.presupuestoDelProyecto?.replace(/[^0-9.-]/g, '')) || 0;
+    const montoContrato = parseMonetary(projectData.montoContrato);
+    const presupuestoProyecto = parseMonetary(projectData.presupuestoDelProyecto);
     
     // Balance de Compras = Presupuesto - Egresos
     const balanceCompras = totales.presupuesto - totales.egresos;
@@ -221,7 +292,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     const utilidadReal = montoContrato - totales.egresos;
     
     // Saldo por Cobrar = Monto Contrato - Adelantos
-    const adelantos = parseFloat(projectData.adelantos?.replace(/[^0-9.-]/g, '')) || 0;
+  const adelantos = parseMonetary(projectData.adelantos);
     const saldoPorCobrar = montoContrato - adelantos;
 
     return {
@@ -328,10 +399,10 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       }, { totalPresupuesto: 0, totalContrato: 0, totalEgresos: 0 });
 
       // 🧮 CALCULAR CAMPOS FINANCIEROS
-      const montoContrato = parseFloat(projectData.montoContrato?.toString().replace(/[^0-9.-]/g, '')) || 0;
-      const adelantos = parseFloat(projectData.adelantos?.toString().replace(/[^0-9.-]/g, '')) || 0;
-      const utilidadEstimadaSF = parseFloat(projectData.utilidadEstimadaSinFactura?.toString().replace(/[^0-9.-]/g, '')) || 0;
-      const utilidadEstimadaCF = parseFloat(projectData.utilidadEstimadaConFactura?.toString().replace(/[^0-9.-]/g, '')) || 0;
+    const montoContrato = parseMonetary(projectData.montoContrato);
+  const adelantos = parseMonetary(projectData.adelantos);
+  const utilidadEstimadaSF = parseMonetary(projectData.utilidadEstimadaSinFactura);
+  const utilidadEstimadaCF = parseMonetary(projectData.utilidadEstimadaConFactura);
 
       // 🔄 ACTUALIZAR TODOS LOS CAMPOS CALCULADOS EN EL SERVICIO
       
@@ -1152,7 +1223,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                           type="text" 
                           className="w-full border-none outline-none text-xs px-1 py-0.5" 
                           placeholder="S/ 0.00" 
-                          value={`S/ ${parseFloat(projectData.utilidadEstimadaSinFactura?.toString().replace(/[^0-9.-]/g, '')) || 0}`}
+                          value={`S/ ${parseMonetary(projectData.utilidadEstimadaSinFactura) || 0}`}
                           onChange={(e) => handleUtilidadEstimadaSFChange(e.target.value)}
                         />
                       </td>
@@ -1176,7 +1247,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                           type="text" 
                           className="w-full border-none outline-none text-xs px-1 py-0.5" 
                           placeholder="S/ 0.00" 
-                          value={`S/ ${parseFloat(projectData.utilidadEstimadaConFactura?.toString().replace(/[^0-9.-]/g, '')) || 0}`}
+                          value={`S/ ${parseMonetary(projectData.utilidadEstimadaConFactura) || 0}`}
                           onChange={(e) => handleUtilidadEstimadaCFChange(e.target.value)}
                         />
                       </td>
@@ -1248,7 +1319,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                           type="text" 
                           className="w-full border-none outline-none text-xs px-1 py-0.5" 
                           placeholder="S/ 0.00" 
-                          value={`S/ ${parseFloat(projectData.montoContrato?.toString().replace(/[^0-9.-]/g, '')) || 0}`}
+                          value={`S/ ${parseMonetary(projectData.montoContrato) || 0}`}
                           onChange={(e) => handleMontoContratoChange(e.target.value)}
                         />
                       </td>
@@ -1260,7 +1331,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                           type="text" 
                           className="w-full border-none outline-none text-xs px-1 py-0.5" 
                           placeholder="S/ 0.00" 
-                          value={`S/ ${parseFloat(projectData.adelantos?.toString().replace(/[^0-9.-]/g, '')) || 0}`}
+                          value={`S/ ${parseMonetary(projectData.adelantos) || 0}`}
                           onChange={(e) => handleAdelantosChange(e.target.value)}
                         />
                       </td>
@@ -1309,7 +1380,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                         type="text" 
                         className="w-full border-none outline-none text-xs px-1 py-0.5" 
                         placeholder="S/ 0.00" 
-                        value={`S/ ${parseFloat(projectData.montoContrato?.toString().replace(/[^0-9.-]/g, '')) || 0}`}
+                        value={`S/ ${parseMonetary(projectData.montoContrato) || 0}`}
                         onChange={(e) => handleMontoContratoChange(e.target.value)}
                       />
                     </td>

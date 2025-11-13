@@ -15,6 +15,13 @@ export const useProjectData = () => {
       setProjects(updatedProjects);
     });
 
+    // Forzar recarga desde localStorage en mount para sincronización cross-tab
+    try {
+      projectDataService.reloadFromLocalStorage();
+    } catch (e) {
+      // ignore
+    }
+
     return unsubscribe; // Cleanup
   }, []);
 
@@ -58,6 +65,7 @@ export const useProjectData = () => {
     updateProject,
     createProject,
     deleteProject,
+  reload: () => projectDataService.reloadFromLocalStorage(),
     updateCategory,
     getProject
   };

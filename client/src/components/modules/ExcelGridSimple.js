@@ -675,14 +675,14 @@ const ExcelGridSimple = () => {
     // 🔍 ZOOM ULTRA-REDUCIDO: < 500px - MODO SÚPER COMPACTO
     if (width < 500) {
       return {
-        columnWidth: '45px',
-        indexWidth: '15px',
-        headerHeight: '18px',
-        rowHeight: '16px',
-        fontSize: 'text-[5px]',
-        headerFontSize: 'text-[5px]',
-        padding: 'px-0',
-        headerPadding: 'px-0 py-0',
+  columnWidth: '36px',
+  indexWidth: '12px',
+  headerHeight: '16px',
+  rowHeight: '14px',
+  fontSize: 'text-[6px]',
+  headerFontSize: 'text-[6px]',
+  padding: 'px-0',
+  headerPadding: 'px-0 py-0',
         containerWidth: 'auto',
         screenType: 'ultra-small'
       };
@@ -690,14 +690,14 @@ const ExcelGridSimple = () => {
     // 📱 MÓVIL/ZOOM MUY REDUCIDO: 500px - 640px - SÚPER COMPACTO
     else if (width < 640) {
       return {
-        columnWidth: '55px',
-        indexWidth: '16px',
-        headerHeight: '19px',
-        rowHeight: '17px',
-        fontSize: 'text-[6px]',
-        headerFontSize: 'text-[6px]',
-        padding: 'px-0',
-        headerPadding: 'px-0 py-0',
+  columnWidth: '44px',
+  indexWidth: '14px',
+  headerHeight: '18px',
+  rowHeight: '16px',
+  fontSize: 'text-[7px]',
+  headerFontSize: 'text-[7px]',
+  padding: 'px-0',
+  headerPadding: 'px-0 py-0',
         containerWidth: 'auto',
         screenType: 'mobile'
       };
@@ -705,14 +705,14 @@ const ExcelGridSimple = () => {
     // 📟 ZOOM REDUCIDO: 640px - 800px - MUY COMPACTO
     else if (width < 800) {
       return {
-        columnWidth: '65px',
-        indexWidth: '18px',
-        headerHeight: '20px',
-        rowHeight: '18px',
-        fontSize: 'text-[7px]',
-        headerFontSize: 'text-[6px]',
-        padding: 'px-0',
-        headerPadding: 'px-0.5 py-0',
+  columnWidth: '55px',
+  indexWidth: '16px',
+  headerHeight: '18px',
+  rowHeight: '17px',
+  fontSize: 'text-[8px]',
+  headerFontSize: 'text-[7px]',
+  padding: 'px-0.5',
+  headerPadding: 'px-0.5 py-0',
         containerWidth: 'auto',
         screenType: 'small-tablet'
       };
@@ -720,14 +720,14 @@ const ExcelGridSimple = () => {
     // 📟 TABLET/ZOOM MEDIO: 800px - 1000px - COMPACTO
     else if (width < 1000) {
       return {
-        columnWidth: '72px',
-        indexWidth: '20px',
-        headerHeight: '21px',
-        rowHeight: '19px',
-        fontSize: 'text-[7px]',
-        headerFontSize: 'text-[7px]',
-        padding: 'px-0.5',
-        headerPadding: 'px-0.5 py-0',
+  columnWidth: '62px',
+  indexWidth: '18px',
+  headerHeight: '20px',
+  rowHeight: '18px',
+  fontSize: 'text-[8px]',
+  headerFontSize: 'text-[8px]',
+  padding: 'px-0.5',
+  headerPadding: 'px-0.5 py-0',
         containerWidth: 'auto',
         screenType: 'tablet'
       };
@@ -735,14 +735,14 @@ const ExcelGridSimple = () => {
     // 💻 LAPTOP/ZOOM ESTÁNDAR: 1000px - 1300px - EQUILIBRADO Y UNIFORME
     else if (width < 1300) {
       return {
-        columnWidth: '95px', // Aumentado para mejor uniformidad
-        indexWidth: '35px', // Más ancho para el índice
-        headerHeight: '26px',
-        rowHeight: '24px',
-        fontSize: 'text-[9px]',
-        headerFontSize: 'text-[9px]',
-        padding: 'px-1',
-        headerPadding: 'px-1 py-0.5',
+  columnWidth: '75px', // reducido para compactar
+  indexWidth: '28px',
+  headerHeight: '24px',
+  rowHeight: '22px',
+  fontSize: 'text-[9px]',
+  headerFontSize: 'text-[9px]',
+  padding: 'px-1',
+  headerPadding: 'px-1 py-0.5',
         containerWidth: 'auto',
         screenType: 'laptop'
       };
@@ -750,14 +750,14 @@ const ExcelGridSimple = () => {
     // 🖥️ DESKTOP: 1300px - 1700px - CÓMODO Y BIEN PROPORCIONADO
     else if (width < 1700) {
       return {
-        columnWidth: '110px', // Significativamente más ancho para uniformidad
-        indexWidth: '40px', // Índice más visible
-        headerHeight: '30px',
-        rowHeight: '28px',
-        fontSize: 'text-[10px]',
-        headerFontSize: 'text-[10px]',
-        padding: 'px-1.5',
-        headerPadding: 'px-1.5 py-1',
+  columnWidth: '90px', // reducido
+  indexWidth: '34px',
+  headerHeight: '28px',
+  rowHeight: '26px',
+  fontSize: 'text-[10px]',
+  headerFontSize: 'text-[10px]',
+  padding: 'px-1',
+  headerPadding: 'px-1 py-1',
         containerWidth: 'auto',
         screenType: 'desktop'
       };
@@ -765,14 +765,14 @@ const ExcelGridSimple = () => {
     // 🖥️ DESKTOP GRANDE: > 1700px - ÓPTIMO Y ESPACIOSO
     else {
       return {
-        columnWidth: '125px', // Muy ancho para zooms altos y pantallas grandes
-        indexWidth: '45px', // Índice bien visible
-        headerHeight: '32px',
-        rowHeight: '30px',
-        fontSize: 'text-[11px]',
-        headerFontSize: 'text-[11px]',
-        padding: 'px-2',
-        headerPadding: 'px-2 py-1.5',
+  columnWidth: '100px', // más compacto
+  indexWidth: '38px',
+  headerHeight: '30px',
+  rowHeight: '28px',
+  fontSize: 'text-[11px]',
+  headerFontSize: 'text-[11px]',
+  padding: 'px-1.5',
+  headerPadding: 'px-1.5 py-1',
         containerWidth: 'auto',
         screenType: 'desktop-large'
       };
@@ -800,33 +800,33 @@ const ExcelGridSimple = () => {
     
     if (textColumns.includes(columnKey)) {
       // Texto: Más ancho para legibilidad
-      const multiplier = config.screenType === 'ultra-small' ? 1.5 :
-                        config.screenType === 'mobile' ? 1.4 : 
-                        config.screenType === 'small-tablet' ? 1.3 :
-                        config.screenType === 'tablet' ? 1.25 : 
-                        config.screenType === 'laptop' ? 1.2 :
-                        config.screenType === 'desktop' ? 1.3 :
-                        1.4; // desktop-large
+  const multiplier = config.screenType === 'ultra-small' ? 1.35 :
+        config.screenType === 'mobile' ? 1.25 : 
+        config.screenType === 'small-tablet' ? 1.15 :
+        config.screenType === 'tablet' ? 1.1 : 
+        config.screenType === 'laptop' ? 1.05 :
+        config.screenType === 'desktop' ? 1.1 :
+        1.15; // desktop-large
       return `${Math.round(baseWidth * multiplier)}px`;
     } else if (selectColumns.includes(columnKey)) {
       // Selecciones: MÁS ANCHAS para que se vea el texto completo de los dropdowns
-      const multiplier = config.screenType === 'ultra-small' ? 0.95 :
-                        config.screenType === 'mobile' ? 0.92 : 
-                        config.screenType === 'small-tablet' ? 0.9 :
-                        config.screenType === 'tablet' ? 0.95 : 
-                        config.screenType === 'laptop' ? 1.1 :
-                        config.screenType === 'desktop' ? 1.2 :
-                        1.3; // desktop-large - MUCHO más ancho para zooms altos
+  const multiplier = config.screenType === 'ultra-small' ? 0.9 :
+        config.screenType === 'mobile' ? 0.9 : 
+        config.screenType === 'small-tablet' ? 0.88 :
+        config.screenType === 'tablet' ? 0.9 : 
+        config.screenType === 'laptop' ? 1.0 :
+        config.screenType === 'desktop' ? 1.05 :
+        1.1; // desktop-large
       return `${Math.round(baseWidth * multiplier)}px`;
     } else if (moneyColumns.includes(columnKey)) {
       // Dinero/números: Equilibradas, no demasiado pequeñas
-      const multiplier = config.screenType === 'ultra-small' ? 0.65 :
-                        config.screenType === 'mobile' ? 0.7 : 
-                        config.screenType === 'small-tablet' ? 0.72 :
-                        config.screenType === 'tablet' ? 0.75 : 
-                        config.screenType === 'laptop' ? 0.85 :
-                        config.screenType === 'desktop' ? 0.9 :
-                        0.95; // desktop-large
+  const multiplier = config.screenType === 'ultra-small' ? 0.7 :
+        config.screenType === 'mobile' ? 0.75 : 
+        config.screenType === 'small-tablet' ? 0.78 :
+        config.screenType === 'tablet' ? 0.8 : 
+        config.screenType === 'laptop' ? 0.88 :
+        config.screenType === 'desktop' ? 0.9 :
+        0.92; // desktop-large
       return `${Math.round(baseWidth * multiplier)}px`;
     }
     
@@ -861,6 +861,21 @@ const ExcelGridSimple = () => {
       columns: ['creditoFiscal', 'impuestoRealProyecto']
     }
   ];
+
+  // Calcular ancho total de una sección sumando anchos de sus columnas
+  const getSectionWidth = (section) => {
+    try {
+      const cols = section.columns || [];
+      const total = cols.reduce((acc, col) => {
+        const w = getColumnWidth(col, config);
+        const n = typeof w === 'string' ? parseInt(w.replace(/px/, '')) || 0 : Number(w) || 0;
+        return acc + n;
+      }, 0);
+      return `${total}px`;
+    } catch (e) {
+      return config.columnWidth;
+    }
+  };
 
   // Recalcular configuración dinámicamente cuando cambie el tamaño
   const config = useMemo(() => getColumnConfig(), [forceUpdate]);
@@ -1009,14 +1024,16 @@ const ExcelGridSimple = () => {
           value={value || ''}
           onChange={(e) => handleCellChange(rowIndex, columnKey, e.target.value)}
           onClick={columnKey === 'nombreProyecto' ? () => handleRowClick(rowIndex) : undefined}
-          className={`w-full h-full px-0.5 border-none outline-none ${fontSize} bg-white text-black placeholder-gray-400 focus:bg-blue-50 focus:ring-1 focus:ring-blue-300 text-center leading-tight font-medium ${
+          className={`w-full h-full px-0.5 sm:px-0 border-none outline-none ${fontSize} bg-white text-black placeholder-gray-400 focus:bg-blue-50 focus:ring-1 focus:ring-blue-300 text-center leading-tight font-medium ${
             columnKey === 'nombreProyecto' ? 'cursor-pointer text-left' : ''
           }`}
           placeholder=""
           title={columnKey === 'nombreProyecto' ? `🖱️ Hacer clic para abrir ${value || `Proyecto ${rowIndex}`}` : ''}
           style={{
             lineHeight: '1.1',
-            height: config.rowHeight
+            height: config.rowHeight,
+            paddingTop: '0px',
+            paddingBottom: '0px'
           }}
         />
       );
@@ -1393,6 +1410,24 @@ const ExcelGridSimple = () => {
                     
                     {/* Header de Excel - FORMATO IDÉNTICO AL ORIGINAL */}
                     <div className="sticky top-0 z-30 bg-gray-100 border-b-2 border-gray-400">
+                      {/* Fila superior: Banda de secciones (encabezados agrupados) */}
+                      <div className="flex">
+                        <div style={{width: config.indexWidth, height: '22px'}} className="bg-transparent border-r border-gray-300"></div>
+                        {sections.map((section) => (
+                          <div
+                            key={`band-${section.title}`}
+                            className={`flex items-center justify-center border-r border-gray-300 text-sm font-semibold text-white`}
+                            style={{
+                              width: getSectionWidth(section),
+                              background: section.color === 'bg-red-600' ? '#b91c1c' : section.color === 'bg-blue-800' ? '#1e40af' : section.color === 'bg-green-600' ? '#15803d' : '#c2410c',
+                              height: '22px'
+                            }}
+                          >
+                            <span className="px-2 text-xs truncate">{section.title}</span>
+                          </div>
+                        ))}
+                      </div>
+
                       <div className="flex">
                         <div 
                           className="bg-gray-200 flex items-center justify-center text-black font-bold border border-gray-400"

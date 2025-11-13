@@ -40,9 +40,30 @@ class ProjectDataService {
 
   saveToLocalStorage() {
     try {
+      // Guardar en la clave principal
       localStorage.setItem('ksamati_projects', JSON.stringify(this.projects));
+      // También guardar en la clave cliente/legacy para compatibilidad
+      try {
+        localStorage.setItem('ksamti_proyectos', JSON.stringify(this.projects));
+      } catch (e) {
+        // ignore per-key error
+      }
     } catch (error) {
       console.warn('Error saving projects to localStorage:', error);
+    }
+  }
+
+  // Forzar recarga desde localStorage (útil si otra pestaña o flujo modificó los datos)
+  reloadFromLocalStorage() {
+    try {
+      const saved = localStorage.getItem('ksamati_projects') || localStorage.getItem('ksamti_proyectos');
+      if (saved) {
+        const projects = JSON.parse(saved);
+        this.projects = this.ensureAllCategoriesExist(projects);
+        this.notifyListeners();
+      }
+    } catch (e) {
+      console.warn('Error reloading projects from localStorage:', e);
     }
   }
 

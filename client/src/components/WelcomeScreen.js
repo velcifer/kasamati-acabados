@@ -6,6 +6,13 @@ const WelcomeScreen = () => {
   const navigate = useNavigate();
 
   const handleIngresar = () => {
+    // Crear sesión demo ligera en localStorage para permitir acceso sin login
+    try {
+      const demoUser = { id: 'demo', name: 'Usuario Demo', role: 'demo' };
+      localStorage.setItem('user', JSON.stringify(demoUser));
+    } catch (e) {
+      // ignore
+    }
     navigate('/inicio');
   };
 
