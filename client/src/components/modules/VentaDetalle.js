@@ -98,7 +98,7 @@ const VentaDetalle = ({ venta = {}, ventaNumber = 1, onBack, onSave }) => {
   const calculateFormulas = (data) => {
     const parseAmount = (value) => {
       if (!value) return 0;
-      const cleanValue = value.toString().replace(/[$/,\s]/g, '');
+      const cleanValue = value.toString().replace(/[$/,\\s]/g, '');
       return parseFloat(cleanValue) || 0;
     };
 
@@ -108,7 +108,7 @@ const VentaDetalle = ({ venta = {}, ventaNumber = 1, onBack, onSave }) => {
 
     // Calcular totales por cotizador
     let totalMelamina = 0;
-    let totalGranito = 0; 
+    let totalGranito = 0;
     let totalTercializaciones = 0;
 
     data.cotizadorMelamina.forEach(item => {
@@ -135,17 +135,17 @@ const VentaDetalle = ({ venta = {}, ventaNumber = 1, onBack, onSave }) => {
       montoFacturadoMelamina: formatAmount(totalMelamina * 0.8),
       montoConReciboMelamina: formatAmount(totalMelamina),
       facturaTotalMelamina: formatAmount(totalMelamina),
-      
+
       reciboInternoGranito: formatAmount(totalGranito * 0.9),
       montoFacturadoGranito: formatAmount(totalGranito * 0.8),
       montoConReciboGranito: formatAmount(totalGranito),
       facturaTotalGranito: formatAmount(totalGranito),
-      
+
       reciboInternoTercializaciones: formatAmount(totalTercializaciones * 0.9),
       montoFacturadoTercializaciones: formatAmount(totalTercializaciones * 0.8),
       montoConReciboTercializaciones: formatAmount(totalTercializaciones),
       facturaTotalTercializaciones: formatAmount(totalTercializaciones),
-      
+
       // Totales principales
       totalUtilidad: formatAmount(totalUtilidad),
       totalRecibo: formatAmount(totalRecibo),
@@ -153,6 +153,85 @@ const VentaDetalle = ({ venta = {}, ventaNumber = 1, onBack, onSave }) => {
       totalDobleModoCon: (totalUtilidad * 0.95).toFixed(2),
       totalDobleModeSin: (totalUtilidad * 0.85).toFixed(2)
     };
+  };
+
+  // ---- ADICIÓN: normalizar montos y sincronizar con servicio ----
+  const normalizeMonto = (value) => {
+    if (value === undefined || value === null) return '$/0.00';
+    const clean = value.toString().replace(/[^0-9.-]/g, '');
+    const n = parseFloat(clean) || 0;
+    return `$/${n.toFixed(2)}`;
+  };
+
+  // 🔄 Sincronizar con datos de prop
+  useEffect(() => {
+    if (venta && Object.keys(venta).length > 0) {
+      setVentaData(prev => ({
+        ...prev,
+        cliente: venta.cliente || prev.cliente,
+        telefono: venta.telefono || prev.telefono,
+        requerimiento: venta.requerimiento || prev.requerimiento,
+        proyecto: venta.proyecto || `Venta ${ventaNumber}`,
+        estado: venta.estado || prev.estado
+      }));
+    } else {
+      setVentaData(prev => ({
+        ...prev,
+        proyecto: prev.proyecto || `Venta ${ventaNumber}`
+      }));
+    }
+  }, [venta, ventaNumber]);
+
+  // 📌 Sincronizar con la fuente de verdad del servicio cuando cambie
+  useEffect(() => {
+    if (ventaFromService) {
+      setVentaData(prev => ({
+        ...prev,
+        cliente: ventaFromService.cliente || prev.cliente,
+        telefono: ventaFromService.telefono || prev.telefono,
+        requerimiento: ventaFromService.requerimiento || prev.requerimiento,
+        proyecto: ventaFromService.proyecto || prev.proyecto,
+        estado: ventaFromService.estado || prev.estado,
+        cotizadorMelamina: ventaFromService.datosCompletos?.cotizadorMelamina || ventaFromService.cotizadorMelamina || prev.cotizadorMelamina,
+        cotizadorGranito: ventaFromService.datosCompletos?.cotizadorGranito || ventaFromService.cotizadorGranito || prev.cotizadorGranito,
+        cotizadorTercializaciones: ventaFromService.datosCompletos?.cotizadorTercializaciones || ventaFromService.cotizadorTercializaciones || prev.cotizadorTercializaciones,
+        reciboInternoMelamina: ventaFromService.reciboInternoMelamina || prev.reciboInternoMelamina,
+        montoFacturadoMelamina: ventaFromService.montoFacturadoMelamina || prev.montoFacturadoMelamina,
+        facturaTotalMelamina: ventaFromService.facturaTotalMelamina || prev.facturaTotalMelamina,
+        reciboInternoGranito: ventaFromService.reciboInternoGranito || prev.reciboInternoGranito,
+        facturaTotalGranito: ventaFromService.facturaTotalGranito || prev.facturaTotalGranito,
+        reciboInternoTercializaciones: ventaFromService.reciboInternoTercializaciones || prev.reciboInternoTercializaciones,
+        facturaTotalTercializaciones: ventaFromService.facturaTotalTercializaciones || prev.facturaTotalTercializaciones,
+        totalUtilidad: ventaFromService.totalUtilidad || prev.totalUtilidad,
+        totalRecibo: ventaFromService.totalRecibo || prev.totalRecibo,
+        totalFacturado: ventaFromService.totalFacturado || prev.totalFacturado
+      }));
+    }
+  }, [ventaFromService]);
+
+  // Reemplazar implementación de handleCotizadorChange para normalizar montos
+  const handleCotizadorChange = (cotizador, id, field, value) => {
+    // 🔄 AUTO-SYNC: Guardar automáticamente usando el hook
+    if (updateField) {
+      const updatedCotizador = ventaData[cotizador].map(item => {
+        if (item.id !== id) return item;
+        const newVal = field === 'monto' ? normalizeMonto(value) : value;
+        return { ...item, [field]: newVal };
+      });
+      updateField(cotizador, updatedCotizador);
+    }
+
+    setVentaData(prev => {
+      const newData = {
+        ...prev,
+        [cotizador]: prev[cotizador].map(item =>
+          item.id === id ? { ...item, [field]: field === 'monto' ? normalizeMonto(value) : value } : item
+        )
+      };
+
+      // 🧮 FÓRMULAS AUTOMÁTICAS para cotizadores
+      return calculateFormulas(newData);
+    });
   };
 
   const handleInputChange = (field, value) => {
@@ -168,28 +247,6 @@ const VentaDetalle = ({ venta = {}, ventaNumber = 1, onBack, onSave }) => {
       };
       
       // 🧮 FÓRMULAS AUTOMÁTICAS
-      return calculateFormulas(newData);
-    });
-  };
-
-  const handleCotizadorChange = (cotizador, id, field, value) => {
-    // 🔄 AUTO-SYNC: Guardar automáticamente usando el hook
-    if (updateField) {
-      const updatedCotizador = ventaData[cotizador].map(item => 
-        item.id === id ? { ...item, [field]: value } : item
-      );
-      updateField(cotizador, updatedCotizador);
-    }
-    
-    setVentaData(prev => {
-      const newData = {
-        ...prev,
-        [cotizador]: prev[cotizador].map(item => 
-          item.id === id ? { ...item, [field]: value } : item
-        )
-      };
-      
-      // 🧮 FÓRMULAS AUTOMÁTICAS para cotizadores
       return calculateFormulas(newData);
     });
   };

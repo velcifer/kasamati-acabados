@@ -24,10 +24,31 @@ class VentasDataService {
 
   saveToLocalStorage() {
     try {
+      // Guardar en la clave principal
       localStorage.setItem('ksamati_ventas', JSON.stringify(this.ventas));
+      // Guardar también en la clave legacy/cliente por compatibilidad
+      try {
+        localStorage.setItem('ksamti_ventas', JSON.stringify(this.ventas));
+      } catch (e) {
+        // ignore
+      }
       console.log('✅ Ventas guardadas en localStorage:', Object.keys(this.ventas).length);
     } catch (error) {
       console.warn('Error saving ventas to localStorage:', error);
+    }
+  }
+
+  // Forzar recarga desde localStorage (útil si otra pestaña modificó los datos)
+  reloadFromLocalStorage() {
+    try {
+      const saved = localStorage.getItem('ksamati_ventas') || localStorage.getItem('ksamti_ventas');
+      if (saved) {
+        const ventas = JSON.parse(saved);
+        this.ventas = ventas;
+        this.notifyListeners();
+      }
+    } catch (e) {
+      console.warn('Error reloading ventas from localStorage:', e);
     }
   }
 

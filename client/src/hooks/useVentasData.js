@@ -15,6 +15,21 @@ export const useVentasData = () => {
       setVentas(updatedVentas);
     });
 
+    // Forzar recarga desde localStorage al montar
+    try {
+      ventasDataService.reloadFromLocalStorage();
+    } catch (e) {
+      // ignore
+    }
+
+    // Escuchar storage events (cross-tab sync)
+    const onStorage = (e) => {
+      if (e.key === 'ksamati_ventas' || e.key === 'ksamti_ventas') {
+        try { ventasDataService.reloadFromLocalStorage(); } catch (err) { /* ignore */ }
+      }
+    };
+    window.addEventListener('storage', onStorage);
+
     return unsubscribe; // Cleanup
   }, []);
 
