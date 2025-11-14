@@ -566,6 +566,8 @@ const GestorVentas = () => {
         <select
           value={value}
           onChange={(e) => handleCellChange(rowIndex, columnKey, e.target.value)}
+          onFocus={() => console.log('DEBUG: focus select', { rowIndex, columnKey })}
+          onClick={() => console.log('DEBUG: click select', { rowIndex, columnKey })}
           className={`w-full h-full px-1 border-none outline-none ${config.fontSize} bg-transparent text-white focus:bg-white/10 focus:ring-1 focus:ring-white/30`}
         >
           <option value="Cotizando" className="bg-gray-800 text-white">Cotizando</option>
@@ -581,6 +583,8 @@ const GestorVentas = () => {
           type="text"
           value={value || ''}
           onChange={(e) => handleCellChange(rowIndex, columnKey, e.target.value)}
+          onFocus={() => console.log('DEBUG: focus input', { rowIndex, columnKey })}
+          onClick={() => console.log('DEBUG: click input', { rowIndex, columnKey })}
           className={`w-full h-full px-1 border-none outline-none ${config.fontSize} bg-transparent text-white placeholder-white/50 focus:bg-white/10 focus:ring-1 focus:ring-white/30`}
           placeholder={`Ingrese ${columnKey}`}
         />
