@@ -5,6 +5,9 @@ import { useProjectDetail } from '../../hooks/useProjectData';
 import { PencilIcon, DocumentArrowUpIcon, FolderIcon, EyeIcon } from '@heroicons/react/24/solid';
 
 const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
+  // IDs de categorías cuya celda "Contrato Prov. y Serv." debe estar bloqueada y pintada
+  const BLOCKED_CONTRACT_CATEGORY_IDS = [1, 2, 3, 4, 5, 6, 7, 8];
+
   // Util: parsear valores monetarios (acepta string con símbolos o números)
   const parseMonetary = (v) => {
     if (v === undefined || v === null) return 0;
@@ -25,29 +28,237 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
   // 🎯 SISTEMA DE AUTO-SYNC CON EXCEL PRINCIPAL
   const { project, loading, updateField, updateCategory, addCategory, totales } = useProjectDetail(projectNumber);
   
+  // Popup de Cobranzas (acceso desde "Monto del Contrato" de la izquierda)
+  const [cobranzasPopupOpen, setCobranzasPopupOpen] = useState(false);
+  const cobranzasFilesInputRef = useRef(null);
+  const [cobranzasFiles, setCobranzasFiles] = useState([]); // hasta 10 archivos
+  const addCobranzasFiles = (fileList) => {
+    if (!fileList || fileList.length === 0) return;
+    const current = [...cobranzasFiles];
+    const available = Math.max(0, 10 - current.length);
+    const toAdd = Array.from(fileList)
+      .slice(0, available)
+      .map((f) => ({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
+        name: f.name,
+        type: f.type,
+        url: URL.createObjectURL(f),
+        file: f
+      }));
+    setCobranzasFiles([...current, ...toAdd]);
+  };
+  const removeCobranzasFile = (id) => {
+    setCobranzasFiles((prev) => prev.filter((f) => f.id !== id));
+  };
+  const viewCobranzasFile = (fileObj) => {
+    if (!fileObj || !fileObj.url) return;
+    window.open(fileObj.url, '_blank');
+  };
+
+  // Referencia y handler para imprimir SOLO el popup de Cobranzas
+  const cobranzasPopupRef = useRef(null);
+  const handlePrintCobranzas = () => {
+    const node = cobranzasPopupRef.current;
+    if (!node) return;
+
+    // Crear un contenedor espejo solo para impresión, dentro del mismo documento
+    const mirrorId = 'cobranzas-print-root';
+    const styleId = 'cobranzas-print-style';
+
+    // Limpiar restos anteriores
+    const prevMirror = document.getElementById(mirrorId);
+    if (prevMirror) prevMirror.remove();
+    const prevStyle = document.getElementById(styleId);
+    if (prevStyle) prevStyle.remove();
+
+    // Clonar el contenido del popup (sin mover el original)
+    const mirror = document.createElement('div');
+    mirror.id = mirrorId;
+    mirror.setAttribute('style', 'display:none;');
+    // Usamos innerHTML para mantener el marcado con clases de Tailwind
+    mirror.innerHTML = node.innerHTML;
+    document.body.appendChild(mirror);
+
+    // Estilos de impresión: ocultar todo excepto el mirror y normalizar su layout
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.type = 'text/css';
+    style.innerHTML = `
+      @media print {
+        body.printing-cobranzas * { display: none !important; visibility: hidden !important; }
+        body.printing-cobranzas #${mirrorId},
+        body.printing-cobranzas #${mirrorId} * {
+          display: revert !important;
+          visibility: visible !important;
+        }
+        body.printing-cobranzas #${mirrorId} {
+          display: block !important;
+          position: static !important;
+          transform: none !important;
+          inset: auto !important;
+          box-shadow: none !important;
+          width: 100% !important;
+          max-width: 100% !important;
+          max-height: none !important;
+          overflow: visible !important;
+          background: #ffffff !important;
+          border: none !important;
+          padding: 0 !important;
+          margin: 0 !important;
+        }
+        @page { size: A4; margin: 12mm; }
+      }
+    `;
+    document.head.appendChild(style);
+    document.body.classList.add('printing-cobranzas');
+
+    const cleanup = () => {
+      document.body.classList.remove('printing-cobranzas');
+      const m = document.getElementById(mirrorId);
+      if (m) m.remove();
+      const st = document.getElementById(styleId);
+      if (st) st.remove();
+      window.removeEventListener('afterprint', cleanup);
+    };
+    window.addEventListener('afterprint', cleanup);
+
+    // Imprimir
+    setTimeout(() => window.print(), 50);
+  };
+
+  // Popup por-celda para "Contrato Prov. y Serv." (categoría)
+  const [contratoPopupOpenFor, setContratoPopupOpenFor] = useState(null); // categoryId | null
+  const [contratoPopupAnchor, setContratoPopupAnchor] = useState(null); // {top,left} | null
+  const [contratoForm, setContratoForm] = useState({
+    proveedor: '',
+    descripcion: '',
+    monto: '',
+    abonos: Array.from({ length: 5 }, () => ({ fecha: '', monto: '' }))
+  });
+  const openContratoPopup = (categoria, anchorEl) => {
+    const abonos = Array.isArray(categoria?.abonosContrato) && categoria.abonosContrato.length > 0
+      ? categoria.abonosContrato.slice(0, 5).map(a => ({ fecha: a.fecha || '', monto: a.monto || '' }))
+      : Array.from({ length: 5 }, () => ({ fecha: '', monto: '' }));
+    setContratoForm({
+      proveedor: categoria?.proveedorServicio || '',
+      descripcion: categoria?.descripcionServicio || '',
+      monto: categoria?.contratoProvedYServ || '',
+      abonos
+    });
+    setContratoPopupOpenFor(categoria.id);
+    try {
+      if (anchorEl && anchorEl.getBoundingClientRect) {
+        const rect = anchorEl.getBoundingClientRect();
+        setContratoPopupAnchor({
+          top: Math.max(rect.top + window.scrollY - 8, 8),
+          left: rect.right + 12 + window.scrollX
+        });
+      } else {
+        setContratoPopupAnchor(null);
+      }
+    } catch (e) {
+      setContratoPopupAnchor(null);
+    }
+  };
+  const closeContratoPopup = () => { setContratoPopupOpenFor(null); setContratoPopupAnchor(null); };
+  const saveContratoPopup = () => {
+    if (!contratoPopupOpenFor) return;
+    const monto = parseMonetary(contratoForm.monto);
+    const abonosSanitized = contratoForm.abonos.map(a => ({
+      fecha: a.fecha || '',
+      monto: parseMonetary(a.monto)
+    }));
+    const totalAbonos = abonosSanitized.reduce((s, a) => s + (a.monto || 0), 0);
+    const saldo = Math.max(monto - totalAbonos, 0);
+    updateCategory(contratoPopupOpenFor, {
+      proveedorServicio: contratoForm.proveedor,
+      descripcionServicio: contratoForm.descripcion,
+      contratoProvedYServ: monto,
+      abonosContrato: abonosSanitized,
+      saldosPorCancelar: saldo
+    });
+    setContratoPopupOpenFor(null);
+  };
+
+  // Popup por-celda: Registro de Egresos
+  const [egresoPopupOpenFor, setEgresoPopupOpenFor] = useState(null); // categoryId | null
+  const egresoFileInputRef = useRef(null);
+  const [egresoForm, setEgresoForm] = useState({
+    descripcion: '',
+    items: Array.from({ length: 5 }, () => ({ fecha: '', monto: '' })),
+    pdfName: '',
+    pdfData: ''
+  });
+  const openEgresoPopup = (categoria) => {
+    const items = Array.isArray(categoria?.egresosDetalles) && categoria.egresosDetalles.length > 0
+      ? categoria.egresosDetalles.slice(0, 5).map(e => ({ fecha: e.fecha || '', monto: e.monto || '' }))
+      : Array.from({ length: 5 }, () => ({ fecha: '', monto: '' }));
+    setEgresoForm({
+      descripcion: categoria?.descripcionEgreso || '',
+      items,
+      pdfName: categoria?.egresoPdfName || '',
+      pdfData: categoria?.egresoPdfData || ''
+    });
+    setEgresoPopupOpenFor(categoria.id);
+  };
+  const closeEgresoPopup = () => setEgresoPopupOpenFor(null);
+  const handleEgresoFilePick = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = String(reader.result).split(',')[1] || '';
+      setEgresoForm(f => ({ ...f, pdfName: file.name, pdfData: base64 }));
+    };
+    reader.readAsDataURL(file);
+  };
+  const viewEgresoPdf = () => {
+    if (!egresoForm.pdfData) return;
+    const win = window.open('', '_blank');
+    if (win) {
+      win.document.write(`<iframe src="data:application/pdf;base64,${egresoForm.pdfData}" frameborder="0" style="width:100%;height:100vh;"></iframe>`);
+    }
+  };
+  const deleteEgresoPdf = () => setEgresoForm(f => ({ ...f, pdfName: '', pdfData: '' }));
+  const saveEgresoPopup = () => {
+    if (!egresoPopupOpenFor) return;
+    const itemsSanitized = egresoForm.items.map(i => ({
+      fecha: i.fecha || '',
+      monto: parseMonetary(i.monto)
+    }));
+    const total = itemsSanitized.reduce((s, i) => s + (i.monto || 0), 0);
+    updateCategory(egresoPopupOpenFor, {
+      egresosDetalles: itemsSanitized,
+      descripcionEgreso: egresoForm.descripcion,
+      egresoPdfName: egresoForm.pdfName,
+      egresoPdfData: egresoForm.pdfData,
+      registroEgresos: total
+    });
+    setEgresoPopupOpenFor(null);
+  };
   const [projectData, setProjectData] = useState({
     // Datos básicos del proyecto
-    estado: 'Ejecucion',
+    estado: 'Ejecución',
     nombreProyecto: proyecto?.nombreProyecto || `Proyecto ${projectNumber}`,
-    tipo: 'contrato',
+    tipo: 'Facturado',
     nombreCliente: proyecto?.nombreCliente || '',
     telefono: '',
     
     // Análisis Financiero del Proyecto (todos en cero para ser editables)
-    utilidadEstimadaSinFactura: '$/ 0.00',
-    utilidadRealSinFactura: '$/ 0.00',
-    balanceUtilidadSinFactura: '$/ 0.00',
-    utilidadEstimadaConFactura: '$/ 0.00',
-    utilidadRealConFactura: '$/ 0.00',
-    balanceUtilidadConFactura: '$/ 0.00',
+    utilidadEstimadaSinFactura: 'S/0.00',
+    utilidadRealSinFactura: 'S/0.00',
+    balanceUtilidadSinFactura: 'S/0.00',
+    utilidadEstimadaConFactura: 'S/0.00',
+    utilidadRealConFactura: 'S/0.00',
+    balanceUtilidadConFactura: 'S/0.00',
     
     // Cobranzas del Proyecto
-    montoContrato: '$/ 0.00',
-    adelantos: '$/ 0.00',
-    saldoXCobrar: '$/ 0.00',
-    presupuestoDelProyecto: '$/ 0.00',
-    totalEgresosProyecto: '$/ 0.00',
-    balanceDelPresupuesto: '$/ 0.00',
+    montoContrato: 'S/0.00',
+    adelantos: 'S/0.00',
+    saldoXCobrar: 'S/0.00',
+    presupuestoDelProyecto: 'S/0.00',
+    totalEgresosProyecto: 'S/0.00',
+    balanceDelPresupuesto: 'S/0.00',
     
     // 📅 COBRANZAS - FECHAS Y MONTOS EDITABLES
     cobranzas: Array.from({length: 13}, (_, i) => ({
@@ -57,70 +268,76 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     })),
     
     // IGV - SUNAT 18% (todos en cero para ser editables)
-    igvSunat: '$/ 0.00',
-    creditoFiscalEstimado: '$/ 0.00',
-    impuestoEstimadoDelProyecto: '$/ 0.00',
-    creditoFiscalReal: '$/ 0.00',
-    impuestoRealDelProyecto: '$/ 0.00',
+    igvSunat: 'S/0.00',
+    creditoFiscalEstimado: 'S/0.00',
+    impuestoEstimadoDelProyecto: 'S/0.00',
+    creditoFiscalReal: 'S/0.00',
+    impuestoRealDelProyecto: 'S/0.00',
     
     // Totales y Balance (todos en cero para ser editables)
-    totalContratoProveedores: '$/ 0.00',
-    totalSaldoPorPagarProveedores: '$/ 0.00',
-    balanceDeComprasDelProyecto: '$/ 0.00',
+    totalContratoProveedores: 'S/0.00',
+    totalSaldoPorPagarProveedores: 'S/0.00',
+    balanceDeComprasDelProyecto: 'S/0.00',
     
     // Observaciones
     observacionesDelProyecto: '',
     
     // Fechas de cobro (15 campos)
-    fechaCobro1: '$/ 0.00',
-    fechaCobro2: '$/ 0.00',
-    fechaCobro3: '$/ 0.00',
-    fechaCobro4: '$/ 0.00',
-    fechaCobro5: '$/ 0.00',
-    fechaCobro6: '$/ 0.00',
-    fechaCobro7: '$/ 0.00',
-    fechaCobro8: '$/ 0.00',
-    fechaCobro9: '$/ 0.00',
-    fechaCobro10: '$/ 0.00',
-    fechaCobro11: '$/ 0.00',
-    fechaCobro12: '$/ 0.00',
-    fechaCobro13: '$/ 0.00',
-    fechaCobro14: '$/ 0.00',
-    fechaCobro15: '$/ 0.00',
+    fechaCobro1: 'S/0.00',
+    fechaCobro2: 'S/0.00',
+    fechaCobro3: 'S/0.00',
+    fechaCobro4: 'S/0.00',
+    fechaCobro5: 'S/0.00',
+    fechaCobro6: 'S/0.00',
+    fechaCobro7: 'S/0.00',
+    fechaCobro8: 'S/0.00',
+    fechaCobro9: 'S/0.00',
+    fechaCobro10: 'S/0.00',
+    fechaCobro11: 'S/0.00',
+    fechaCobro12: 'S/0.00',
+    fechaCobro13: 'S/0.00',
+    fechaCobro14: 'S/0.00',
+    fechaCobro15: 'S/0.00',
     
     // Categorías iniciales con datos de ejemplo
     categorias: [
-      { id: 1, nombre: 'Melamina y Servicios', tipo: 'F', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 2, nombre: 'Melamina High Gloss', tipo: 'F', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 3, nombre: 'Accesorios y Ferretería', tipo: 'F', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 4, nombre: 'Puertas Alu Vidrios', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 5, nombre: 'Led Y Electricidad', tipo: 'F', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 6, nombre: 'Flete y/o Camioneta', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 7, nombre: 'Logística Operativa', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 8, nombre: 'Extras y/o Eventos', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 9, nombre: 'Despecie', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 10, nombre: 'Mano de Obra', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 11, nombre: 'Mano de Obra', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 12, nombre: 'Mano de Obra', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 13, nombre: 'Mano de Obra', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 14, nombre: 'OF - ESCP', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 15, nombre: 'Granito Y/O Cuarzo', tipo: 'F', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 16, nombre: 'Extras Y/O Eventos GyC', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 17, nombre: 'Tercializacion 1 Facturada', tipo: 'F', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 18, nombre: 'Extras Y/O Eventos Terc. 1', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 19, nombre: 'Tercializacion 2 Facturada', tipo: 'F', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 20, nombre: 'Extras Y/O Eventos Terc. 2', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 21, nombre: 'Tercializacion 1 NO Facturada', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 22, nombre: 'Extras Y/O Eventos Terc. 1 NF', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 23, nombre: 'Tercializacion 2 NO Facturada', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' },
-      { id: 24, nombre: 'Extras Y/O Eventos Terc. 2 NF', presupuestoDelProyecto: '$/ 0.00', contratoProvedYServ: '$/ 0.00', registroEgresos: '$/ 0.00', saldosPorCancelar: '$/ 0.00' }
+      { id: 1, nombre: 'Melamina y Servicios', tipo: 'F', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 2, nombre: 'Melamina High Gloss', tipo: 'F', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 3, nombre: 'Accesorios y Ferretería', tipo: 'F', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 4, nombre: 'Puertas Alu Vidrios', tipo: 'F', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 5, nombre: 'Led Y Electricidad', tipo: 'F', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 6, nombre: 'Flete y/o Camioneta', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 7, nombre: 'Logística Operativa', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 8, nombre: 'Extras y/o Eventos', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 9, nombre: 'Despecie', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 10, nombre: 'Mano de Obra', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 11, nombre: 'Mano de Obra', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 12, nombre: 'Mano de Obra', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 13, nombre: 'Mano de Obra', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 14, nombre: 'OF - ESCP', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 15, nombre: 'Granito Y/O Cuarzo', tipo: 'F', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 16, nombre: 'Extras Y/O Eventos GyC', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 17, nombre: 'Tercializacion 1 Facturada', tipo: 'F', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 18, nombre: 'Extras Y/O Eventos Terc. 1', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 19, nombre: 'Tercializacion 2 Facturada', tipo: 'F', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 20, nombre: 'Extras Y/O Eventos Terc. 2', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 21, nombre: 'Tercializacion 1 NO Facturada', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 22, nombre: 'Extras Y/O Eventos Terc. 1 NF', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 23, nombre: 'Tercializacion 2 NO Facturada', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' },
+      { id: 24, nombre: 'Extras Y/O Eventos Terc. 2 NF', presupuestoDelProyecto: 'S/0.00', contratoProvedYServ: 'S/0.00', registroEgresos: 'S/0.00', saldosPorCancelar: 'S/0.00' }
     ]
   });
 
   // Helper para formatear dinero como muestra la UI
+  const moneyFormatter = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const formatMoney = (v) => {
     const num = parseMonetary(v);
-    return `$/ ${Number.isFinite(num) ? num.toFixed(2) : '0.00'}`;
+    return `S/${Number.isFinite(num) ? moneyFormatter.format(num) : '0.00'}`;
+  };
+  // Formato sin signo negativo (valor absoluto)
+  const formatAbsMoney = (v) => {
+    const num = Math.abs(parseMonetary(v));
+    return `S/${Number.isFinite(num) ? moneyFormatter.format(num) : '0.00'}`;
   };
 
   // Sincronizar estado local con cambios del servicio (project)
@@ -334,14 +551,82 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     }, 0) || 0;
   };
 
+  // 🧮 SALDO RESTANTE = Monto del contrato - total de cobranzas
+  const calcularSaldoRestante = () => {
+    const contrato = parseMonetary(projectData.montoContrato) || 0;
+    const totalCobranzas = calcularTotalCobranzas();
+    const restante = contrato - totalCobranzas;
+    return restante;
+  };
+
+  // 🎨 Estilo de nombres según imagen Excel (colores por categoría)
+  const getNombreCategoriaClass = (nombre) => {
+    try {
+      const n = String(nombre || '').toLowerCase();
+      if (!n) return 'text-black';
+      
+      // Rojo: Despecie, Mano de Obra, Tercializacion Facturada
+      if (n.includes('despecie') || n.includes('despiece')) return 'text-red-600';
+      if (n.includes('mano de obra')) return 'text-red-600';
+      if (n.includes('tercializacion') && n.includes('facturada') && !n.includes('no')) return 'text-red-600';
+      
+      // Verde: Flete, Logística
+      if (n.includes('flete') || n.includes('logística') || n.includes('logistica')) return 'text-green-600';
+      
+      // Azul: Melamina, Accesorios, Puertas, Led
+      if (n.includes('melamina') || n.includes('accesorios') || n.includes('puertas') || n.includes('vidrios') || n.includes('led')) {
+        return 'text-blue-600';
+      }
+      
+      // Morado: Granito, Cuarzo
+      if (n.includes('granito') || n.includes('cuarzo')) return 'text-purple-600';
+      
+      // Gris: NO Facturada, NF
+      if ((n.includes('tercializacion') || n.includes('extras')) && (n.includes('no facturada') || n.includes('nf'))) {
+        return 'text-gray-500';
+      }
+      
+      // Negro: resto (OF - ESCP, Extras y/o Eventos)
+      return 'text-black';
+    } catch {
+      return 'text-black';
+    }
+  };
+
   // 💰 MANEJAR CAMBIO EN MONTO DEL CONTRATO
   const handleMontoContratoChange = (value) => {
     const numericValue = parseFloat(value.toString().replace(/[^0-9.-]/g, '')) || 0;
-    setProjectData(prev => ({ ...prev, montoContrato: numericValue }));
+    // Calcular equivalentes: con factura (sin IGV) y sin factura
+    const estimadoSinFactura = numericValue;
+    const estimadoConFactura = numericValue > 0 ? (numericValue / 1.18) : 0;
+
+    setProjectData(prev => ({
+      ...prev,
+      montoContrato: numericValue,
+      utilidadEstimadaSinFactura: estimadoSinFactura,
+      utilidadEstimadaConFactura: estimadoConFactura,
+      // ⛔ Ya no propagar a todas las filas de Cobranzas. Dejarlas en 0 (vacías visualmente).
+      cobranzas: Array.isArray(prev.cobranzas)
+        ? prev.cobranzas.map(c => ({ ...c, monto: 0 }))
+        : prev.cobranzas
+    }));
     
     // 🔄 AUTO-SAVE
     if (updateField) {
       updateField('montoContrato', numericValue);
+      // También actualizar utilidades estimadas derivadas del contrato
+      updateField('utilidadEstimadaSinFactura', estimadoSinFactura);
+      updateField('utilidadEstimadaConFactura', estimadoConFactura);
+      try {
+        // Guardar cobranzas actualizadas si existen
+        const current = projectData?.cobranzas || [];
+        const updated = Array.isArray(current)
+          ? current.map(c => ({ ...c, monto: 0 }))
+          : current;
+        updateField('cobranzas', updated);
+      } catch (e) {
+        // ignore save error for optional field
+      }
     }
   };
 
@@ -429,11 +714,39 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       
       // 🧾 IGV - SUNAT 18% (calculados automáticamente)
       const igvRate = 0.18;
-      const igvSunat = utilidadRealSF * igvRate;
-      const creditoFiscalEstimado = utilidadEstimadaSF * igvRate;
+      // IGV = (Monto del Contrato / 1.18) * 18%
+      const igvSunat = (montoContrato / 1.18) * igvRate;
+
+      // Crédito Fiscal Estimado = (Suma de PRESUPUESTOS de categorías con "F" (factura) / 1.18) * 18%
+      // Se consideran todas las filas del cuadro izquierdo cuyo tipo es 'F' (rojo)
+      const nombresF = new Set([
+        'melamina y servicios',
+        'melamina high gloss',
+        'accesorios y ferretería',
+        'accesorios y ferreteria',
+        'puertas alu vidrios',
+        'puertas alu y vidrios',
+        'led y electricidad',
+        'granito y/o cuarzo',
+        'tercializacion 1 facturada',
+        'tercialización 1 facturada',
+        'tercializacion 2 facturada',
+        'tercialización 2 facturada'
+      ]);
+      const baseCredito = (projectData.categorias || []).reduce((sum, cat) => {
+        const nombre = (cat?.nombre || '').toString().toLowerCase().trim();
+        const esTipoF = (cat?.tipo || '').toString().toUpperCase() === 'F';
+        const esListado = nombresF.has(nombre);
+        const califica = esTipoF || esListado;
+        const bruto = cat?.presupuestoDelProyecto ?? 0;
+        const valor = parseFloat(String(bruto).replace(/[^0-9.-]/g, '')) || 0;
+        return califica ? sum + valor : sum;
+      }, 0);
+      const creditoFiscalEstimado = (baseCredito / 1.18) * igvRate;
       const impuestoEstimado = montoContrato * igvRate;
       const creditoFiscalReal = utilidadRealSF * igvRate;
-      const impuestoReal = totalesCategoria.totalEgresos * igvRate;
+      // Nuevo cálculo solicitado: Impuesto Real = IGV - Crédito Fiscal Estimado
+      const impuestoReal = igvSunat - creditoFiscalEstimado;
       
       updateField('igvSunat', igvSunat);
       updateField('creditoFiscalEstimado', creditoFiscalEstimado);
@@ -472,32 +785,32 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
         tipoProyecto: project.tipoProyecto || prev.tipoProyecto,
         
         // 💰 DATOS EDITABLES BÁSICOS
-        montoContrato: project.montoContrato || prev.montoContrato,
-        adelantos: project.adelantos || prev.adelantos,
-        utilidadEstimadaSinFactura: project.utilidadEstimadaSinFactura || prev.utilidadEstimadaSinFactura,
-        utilidadEstimadaConFactura: project.utilidadEstimadaConFactura || prev.utilidadEstimadaConFactura,
+        montoContrato: formatMoney(project.montoContrato || 0),
+        adelantos: formatMoney(project.adelantos || 0),
+        utilidadEstimadaSinFactura: formatMoney(project.utilidadEstimadaSinFactura || 0),
+        utilidadEstimadaConFactura: formatMoney(project.utilidadEstimadaConFactura || 0),
         
-        // 🧮 ANÁLISIS FINANCIERO - CAMPOS CALCULADOS
-        utilidadRealSinFactura: `$/ ${project.utilidadRealSinFactura || 0}`,
-        balanceUtilidadSinFactura: `$/ ${project.balanceUtilidadSinFactura || 0}`,
-        utilidadRealConFactura: `$/ ${project.utilidadRealConFactura || 0}`,
-        balanceUtilidadConFactura: `$/ ${project.balanceUtilidadConFactura || 0}`,
+        // 🧮 ANÁLISIS FINANCIERO - CAMPOS CALCULADOS (formato con separadores y 2 decimales)
+        utilidadRealSinFactura: formatMoney(project.utilidadRealSinFactura || 0),
+        balanceUtilidadSinFactura: formatMoney(project.balanceUtilidadSinFactura || 0),
+        utilidadRealConFactura: formatMoney(project.utilidadRealConFactura || 0),
+        balanceUtilidadConFactura: formatMoney(project.balanceUtilidadConFactura || 0),
         
         // 🧾 IGV - SUNAT 18% - CAMPOS CALCULADOS
-        igvSunat: `$/ ${project.igvSunat || 0}`,
-        creditoFiscalEstimado: `$/ ${project.creditoFiscalEstimado || 0}`,
-        impuestoEstimadoDelProyecto: `$/ ${project.impuestoEstimadoDelProyecto || 0}`,
-        creditoFiscalReal: `$/ ${project.creditoFiscalReal || 0}`,
-        impuestoRealDelProyecto: `$/ ${project.impuestoRealDelProyecto || 0}`,
+        igvSunat: formatMoney(project.igvSunat || 0),
+        creditoFiscalEstimado: formatMoney(project.creditoFiscalEstimado || 0),
+        impuestoEstimadoDelProyecto: formatMoney(project.impuestoEstimadoDelProyecto || 0),
+        creditoFiscalReal: formatMoney(project.creditoFiscalReal || 0),
+        impuestoRealDelProyecto: formatMoney(project.impuestoRealDelProyecto || 0),
         
         // 🧮 TOTALES Y BALANCES - CAMPOS CALCULADOS
-        totalContratoProveedores: `$/ ${project.totalContratoProveedores || 0}`,
-        totalSaldoPorPagarProveedores: `$/ ${project.totalSaldoPorPagarProveedores || 0}`,
-        balanceDeComprasDelProyecto: `$/ ${project.balanceDeComprasDelProyecto || 0}`,
-        saldoXCobrar: `$/ ${project.saldoXCobrar || 0}`,
-        presupuestoProyecto: `$/ ${project.presupuestoProyecto || 0}`,
-        totalEgresosProyecto: `$/ ${project.totalEgresosProyecto || 0}`,
-        balanceDelPresupuesto: `$/ ${project.balanceDelPresupuesto || 0}`,
+        totalContratoProveedores: formatMoney(project.totalContratoProveedores || 0),
+        totalSaldoPorPagarProveedores: formatMoney(project.totalSaldoPorPagarProveedores || 0),
+        balanceDeComprasDelProyecto: formatMoney(project.balanceDeComprasDelProyecto || 0),
+        saldoXCobrar: formatMoney(project.saldoXCobrar || 0),
+        presupuestoProyecto: formatMoney(project.presupuestoProyecto || 0),
+        totalEgresosProyecto: formatMoney(project.totalEgresosProyecto || 0),
+        balanceDelPresupuesto: formatMoney(project.balanceDelPresupuesto || 0),
         
         // Categorías sincronizadas
         categorias: project.categorias.length > 0 ? project.categorias.map(cat => ({
@@ -509,7 +822,19 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
         })) : prev.categorias,
         
         // 📅 SINCRONIZAR COBRANZAS GUARDADAS
-        cobranzas: project.cobranzas || prev.cobranzas
+        // Si todas las filas tienen el mismo monto que el monto del contrato (estado antiguo),
+        // las reiniciamos a 0 para que aparezcan vacías.
+        cobranzas: (() => {
+          const fromService = project.cobranzas || prev.cobranzas;
+          if (Array.isArray(fromService) && fromService.length > 0) {
+            const contrato = parseFloat(project.montoContrato || 0);
+            const allEqualToContrato = fromService.every(c => (parseFloat(c?.monto) || 0) === contrato);
+            if (allEqualToContrato && contrato > 0) {
+              return fromService.map(c => ({ ...c, monto: 0 }));
+            }
+          }
+          return fromService;
+        })()
       }));
     }
   }, [project]); // Se ejecuta cada vez que el proyecto del servicio cambie
@@ -910,10 +1235,10 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     const newCategoria = {
       id: maxId + 1,
       nombre: 'Nueva Categoría',
-      presupuestoDelProyecto: '$/ 0.00',
-      contratoProvedYServ: '$/ 0.00',
-      registroEgresos: '$/ 0.00',
-      saldosPorCancelar: '$/ 0.00'
+      presupuestoDelProyecto: 'S/ 0.00',
+      contratoProvedYServ: 'S/ 0.00',
+      registroEgresos: 'S/ 0.00',
+      saldosPorCancelar: 'S/ 0.00'
     };
     
     setProjectData(prev => ({
@@ -922,7 +1247,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     }));
   };
 
-  // Cargar datos del proyecto si existe
+  // Cargar datos del proyecto si existe**
   useEffect(() => {
     if (proyecto) {
       setProjectData(prev => ({
@@ -935,164 +1260,107 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
   
   return (
     <div className="flex flex-col h-screen bg-gray-50">
-      {/* Header estilo imagen - fondo blanco */}
-      <div className="bg-white border-b border-gray-300 shadow-sm">
-        {/* Barra superior con navegación y botones */}
-        <div className="px-2 sm:px-4 py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
-          {/* Lado izquierdo - Navegación y título */}
-          <div className="flex items-center space-x-2 sm:space-x-4">
+      {/* Estilos para impresión */}
+      <style>{`
+        @media print {
+          body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .no-print { display: none !important; }
+          #print-area {
+            display: grid !important;
+            grid-template-columns: 0.9fr 1.1fr !important;
+            gap: 10px !important;
+            width: 100% !important;
+          }
+          #print-area .left-banner { position: static !important; width: auto !important; top: 0 !important; }
+          #print-area .left-panel, #print-area .right-panel { width: auto !important; }
+          #print-area * { overflow: visible !important; }
+          /* Ajustes tipográficos y celdas para que no se recorte */
+          #print-area table { width: 100% !important; }
+          #print-area table td, 
+          #print-area table th { padding: 2px 4px !important; font-size: 11px !important; }
+          #print-area .right-panel table td:last-child { white-space: nowrap !important; }
+          /* Escala global para que quepa en una sola hoja */
+          html, body { zoom: 0.88; }
+          @page { size: A4 landscape; margin: 10mm; }
+        }
+      `}</style>
+      {/* Encabezado con acciones */}
+      <div className="px-3 py-0 flex items-center gap-2">
             <button 
               onClick={onBack}
-              className="flex items-center text-gray-600 hover:text-gray-900 text-sm font-medium transition-colors"
+          className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded bg-indigo-600 text-white text-sm font-semibold shadow hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 no-print"
             >
               ← Volver
             </button>
-            
-            <div className="hidden sm:block h-5 w-px bg-gray-300"></div>
-            
-            <h1 className="text-base sm:text-lg font-semibold text-gray-800">
-              Proyecto {projectNumber} - Detalle Completo
-            </h1>
-            </div>
-          
-          {/* Lado derecho - Botones de acción estilo imagen */}
-          <div className="flex items-center space-x-3 w-full sm:w-auto">
             <button
-              onClick={() => setDocumentosPopupOpen(true)}
-              className="flex items-center justify-center px-3 sm:px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white text-xs sm:text-sm font-medium rounded-md border border-orange-600 transition-colors shadow-sm w-full sm:w-auto"
+          onClick={() => window.print()}
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-green-600 text-white text-xs font-semibold shadow hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-400 no-print"
+          title="Generar PDF (usa Guardar como PDF)"
             >
-              <span className="hidden sm:inline">📄 DATOS ADICIONALES</span>
-              <span className="sm:hidden">📄 DATOS</span>
+          Generar PDF
             </button>
-          </div>
         </div>
 
-        {/* Barra de información del proyecto - fondo blanco */}
-        <div className="bg-white border-t border-gray-200 px-2 sm:px-4 py-3">
-          {/* Vista móvil - apilada */}
-          <div className="block lg:hidden space-y-3">
-            {/* Fila 1 */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="flex flex-col space-y-1">
-                <span className="font-medium text-gray-700 text-xs">Proyecto:</span>
+      {/* Contenido principal - Layout responsive centrado */}
+      <div id="print-area" className="flex flex-row gap-6 px-2 py-0 max-w-[1400px] mx-auto overflow-x-hidden -mt-4 justify-center items-start">
+        {/* Barra lateral izquierda con controles */}
+        <aside className="hidden md:block w-44 mt-6 left-banner z-30">
+          <div className="bg-white rounded-lg shadow p-3 sticky top-24 z-30">
+            <div className="flex flex-col gap-2 text-xs">
+              <div className="flex flex-col gap-1">
+                <span className="font-semibold text-gray-700">Proyecto</span>
                 <input
                   type="text"
                   value={projectData.nombreProyecto}
                   onChange={(e) => handleInputChange('nombreProyecto', e.target.value)}
-                  className="border border-gray-300 rounded-md px-2 py-1.5 bg-white hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-200 transition-colors text-sm w-full"
-                  placeholder="Nombre del proyecto"
+                  className="border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                  placeholder="Proyecto"
                 />
               </div>
-              <div className="flex flex-col space-y-1">
-                <span className="font-medium text-gray-700 text-xs">Cliente:</span>
+              <div className="flex flex-col gap-1">
+                <span className="font-semibold text-gray-700">Cliente</span>
                 <input
                   type="text"
                   value={projectData.nombreCliente}
                   onChange={(e) => handleInputChange('nombreCliente', e.target.value)}
-                  className="border border-gray-300 rounded-md px-2 py-1.5 bg-white hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-200 transition-colors text-sm w-full"
-                  placeholder="Nombre del cliente"
-                />
-              </div>
-            </div>
-            
-            {/* Fila 2 */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="flex flex-col space-y-1">
-                <span className="font-medium text-gray-700 text-xs">Estado:</span>
-            <select
-              value={projectData.estado}
-              onChange={(e) => handleInputChange('estado', e.target.value)}
-                  className="border border-gray-300 rounded-md px-2 py-1.5 bg-white hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-200 transition-colors text-sm w-full"
-                >
-                  <option value="Cotizando">Cotizando</option>
-                  <option value="Ejecucion">En Ejecución</option>
-                  <option value="Finalizado">Finalizado</option>
-                  <option value="Cancelado">Cancelado</option>
-            </select>
-              </div>
-              <div className="flex flex-col space-y-1">
-                <span className="font-medium text-gray-700 text-xs">Tipo:</span>
-            <select
-              value={projectData.tipo}
-              onChange={(e) => handleInputChange('tipo', e.target.value)}
-                  className="border border-gray-300 rounded-md px-2 py-1.5 bg-white hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-200 transition-colors text-sm w-full"
-                >
-                  <option value="contrato">Contrato</option>
-                  <option value="servicio">Servicio</option>
-                  <option value="recibo">Recibo</option>
-                  <option value="proyecto">Proyecto</option>
-            </select>
-              </div>
-            </div>
-          </div>
-          
-          {/* Vista desktop - horizontal */}
-          <div className="hidden lg:flex items-center space-x-6">
-            <div className="flex items-center space-x-2">
-              <span className="font-medium text-gray-700">Proyecto:</span>
-          <input
-            type="text"
-            value={projectData.nombreProyecto}
-            onChange={(e) => handleInputChange('nombreProyecto', e.target.value)}
-                className="border border-gray-300 rounded-md px-3 py-1.5 bg-white hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-200 transition-colors w-56"
-            placeholder="Nombre del proyecto"
-          />
-            </div>
-          
-            <div className="h-5 w-px bg-gray-300"></div>
-          
-            <div className="flex items-center space-x-2">
-              <span className="font-medium text-gray-700">Cliente:</span>
-          <input
-            type="text"
-            value={projectData.nombreCliente}
-            onChange={(e) => handleInputChange('nombreCliente', e.target.value)}
-                className="border border-gray-300 rounded-md px-3 py-1.5 bg-white hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-200 transition-colors w-44"
+                  className="border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-300"
                 placeholder="Cliente"
           />
         </div>
-
-            <div className="h-5 w-px bg-gray-300"></div>
-            
-            <div className="flex items-center space-x-2">
-              <span className="font-medium text-gray-700">Estado:</span>
+              <div className="flex flex-col gap-1">
+                <span className="font-semibold text-gray-700">Estado</span>
               <select
                 value={projectData.estado}
                 onChange={(e) => handleInputChange('estado', e.target.value)}
-                className="border border-gray-300 rounded-md px-3 py-1.5 bg-white hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-200 transition-colors w-36"
-              >
-                <option value="Cotizando">Cotizando</option>
-                <option value="Ejecucion">En Ejecución</option>
-                <option value="Finalizado">Finalizado</option>
-                <option value="Cancelado">Cancelado</option>
+                  className="border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                >
+                  <option value="En Cierre">En Cierre</option>
+                  <option value="Ejecución">Ejecución</option>
+                  <option value="Cobranza">Cobranza</option>
+                  <option value="Archivado">Archivado</option>
               </select>
             </div>
-            
-            <div className="h-5 w-px bg-gray-300"></div>
-            
-            <div className="flex items-center space-x-2">
-              <span className="font-medium text-gray-700">Tipo:</span>
+              <div className="flex flex-col gap-1">
+                <span className="font-semibold text-gray-700">Tipo</span>
               <select
                 value={projectData.tipo}
                 onChange={(e) => handleInputChange('tipo', e.target.value)}
-                className="border border-gray-300 rounded-md px-3 py-1.5 bg-white hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-200 transition-colors w-32"
-              >
-                <option value="contrato">Contrato</option>
-                <option value="servicio">Servicio</option>
-                <option value="recibo">Recibo</option>
-                <option value="proyecto">Proyecto</option>
+                  className="border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                >
+                  <option value="Facturado">Facturado</option>
+                  <option value="Boleta de venta">Boleta de venta</option>
+                  <option value="Recibo Interno">Recibo Interno</option>
               </select>
                 </div>
               </div>
             </div>
-          </div>
+        </aside>
 
-      {/* Contenido principal - Layout responsive centrado */}
-      <div className="flex-1 flex flex-col xl:flex-row gap-2 px-1 py-1 sm:py-2 justify-center items-start xl:items-stretch max-w-[1400px] 2xl:max-w-[1600px] mx-auto">
         {/* Tabla principal de categorías */}
-        <div className="bg-white rounded-lg shadow-lg overflow-hidden w-full xl:w-[480px] 2xl:w-[520px]" style={{
-          height: 'calc(100vh - 160px)',
-          maxHeight: '80vh',
+        <div className="flex-shrink-0 left-panel">
+        <div className="bg-white rounded-lg shadow-lg overflow-hidden" style={{
+          width: '560px',
+          maxWidth: '100%',
           minHeight: '420px'
         }}>
         {/* Header de la tabla */}
@@ -1100,26 +1368,52 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
           <span>📊 CATEGORÍAS Y SERVICIOS DEL PROYECTO</span>
             </div>
 
+
+
+        {/* Barra superior: Monto del Contrato (entrada rápida) */}
+        <div className="px-3 py-2 bg-white border-b border-gray-200 flex items-center justify-between">
+          <span className="text-xs font-semibold text-gray-700">Monto del Contrato</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={formatMoney(projectData.montoContrato || 0)}
+              onChange={(e) => handleMontoContratoChange(e.target.value)}
+              className="text-left text-xs border border-gray-300 rounded px-2 py-1 w-32 bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"
+              placeholder="S/0"
+            />
+            <button
+              onClick={() => setCobranzasPopupOpen(true)}
+              title="Abrir Cobranzas del Proyecto"
+              className="px-2 py-1 rounded bg-green-600 text-white text-xs hover:bg-green-700"
+            >
+              Abrir
+            </button>
+          </div>
+            </div>
+
         {/* Contenedor con scroll horizontal y vertical para responsive */}
-        <div className="h-full overflow-auto scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-100 pb-8">
-          <table className="w-full min-w-[600px] table-auto mb-4">
-            {/* Headers de la tabla con colores específicos */}
+        <div className="overflow-x-hidden">
+          <table className="table-fixed mb-4" style={{width: '560px', minWidth: '560px'}}>
+            {/* Headers de la tabla con colores específicos (match Excel) */}
             <thead className="sticky top-0">
               <tr className="text-xs font-bold">
-                <th className="bg-gray-200 border border-gray-400 p-1 text-black text-left font-bold min-w-[170px] w-[170px] text-xs">
+                <th className="bg-gray-100 border border-gray-400 px-0 py-0 text-black text-center font-bold min-w-[22px] w-[22px] text-[10px]">
+                  F
+                </th>
+                <th className="bg-gray-200 border border-gray-400 px-1 py-0.5 text-black text-left font-bold text-[10px] leading-tight" style={{width: '180px', minWidth: '180px', maxWidth: '180px'}}>
                   Categoría Del Proveedor<br />y/o el servicio
                 </th>
-                <th className="bg-green-600 border border-gray-400 p-1 text-white text-left font-bold min-w-[80px] w-[80px] text-xs">
-                  Presupuesto<br />Del Proyecto
+                <th className="bg-green-600 border border-gray-400 px-1 py-0.5 text-white text-center font-bold text-[9px] leading-tight" style={{width: '70px', minWidth: '70px', maxWidth: '70px'}}>
+                  Presup.<br />Del Proy.
                 </th>
-                <th className="bg-blue-600 border border-gray-400 p-1 text-white text-left font-bold min-w-[80px] w-[80px] text-xs">
-                  Contrato<br />Proved. Y Serv.
+                <th className="bg-blue-600 border border-gray-400 px-1 py-1 text-white text-center font-bold text-[9px] leading-tight break-words whitespace-normal" style={{width: '100px', minWidth: '100px', maxWidth: '100px'}}>
+                  Contrato<br />Prov. Y Serv.
                 </th>
-                <th className="bg-red-600 border border-gray-400 px-2 py-1 text-white text-left font-bold min-w-[140px] w-[140px] text-xs leading-tight">
+                <th className="bg-red-600 border border-gray-400 px-1 py-1 text-white text-center font-bold text-[9px] leading-tight break-words whitespace-normal" style={{width: '100px', minWidth: '100px', maxWidth: '100px'}}>
                   Registro<br />Egresos
                 </th>
-                <th className="bg-orange-500 border border-gray-400 p-1 text-white text-left font-bold min-w-[85px] w-[85px] text-xs">
-                  Saldos por cancelar<br />servicio Proveedores
+                <th className="bg-gray-600 border border-gray-400 px-1 py-0.5 text-white text-center font-bold text-[9px] leading-tight" style={{width: '80px', minWidth: '80px', maxWidth: '80px'}}>
+                  Saldos por<br />cancelar
                 </th>
               </tr>
             </thead>
@@ -1127,75 +1421,118 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
             {/* Body de la tabla con celdas blancas editables */}
             <tbody>
               {projectData.categorias.map((categoria) => (
-                <tr key={categoria.id} className="hover:bg-gray-50 h-8">
-                  <td className="border border-gray-400 px-1 py-0.5 bg-white">
-                    <div className="flex items-center">
-                    {categoria.tipo && (
-                        <span className={`inline-flex items-center justify-center w-3 h-3 rounded-full text-white text-xs font-bold mr-1 ${
-                          categoria.tipo === 'F' ? 'bg-red-600' : 'bg-gray-600'
-                        }`}>
+                <tr key={categoria.id} className="hover:bg-gray-50 h-5">
+                  {/* Columna F dedicada */}
+                  <td className="border border-gray-400 px-0 py-0 bg-white text-center align-middle min-w-[22px] w-[22px]">
+                    {categoria.tipo ? (
+                      <span className="inline-flex items-center justify-center h-4 px-1 rounded-sm text-white text-[10px] font-bold bg-red-600 select-none">
                         {categoria.tipo}
                       </span>
-                    )}
+                    ) : null}
+                  </td>
+                  <td className="border border-gray-400 px-1 py-0 bg-white align-middle" style={{width: '180px', minWidth: '180px', maxWidth: '180px'}}>
+                    <div className="flex items-center">
                       <input
                         type="text"
                         value={categoria.nombre}
                         onChange={(e) => handleCategoriaChange(categoria.id, 'nombre', e.target.value)}
-                        className="bg-transparent border-none outline-none text-xs w-full"
+                        className={`bg-transparent border-none outline-none text-[10px] w-full h-4 leading-tight px-0 ${getNombreCategoriaClass(categoria.nombre)}`}
                         placeholder="Categoría"
                       />
                   </div>
                   </td>
-                  <td className="border border-gray-400 px-1 py-0.5 bg-white">
+                  <td className="border border-gray-400 px-1 py-0 bg-white align-middle" style={{width: '70px', minWidth: '70px', maxWidth: '70px'}}>
                   <input
                     type="text"
-                    value={categoria.presupuestoDelProyecto}
-                    onChange={(e) => handleCategoriaChange(categoria.id, 'presupuestoDelProyecto', e.target.value)}
-                      className="w-full text-xs border-none outline-none text-left bg-transparent"
-                      placeholder="$/ 0.00"
+                      value={`S/${Math.round(parseFloat(categoria.presupuestoDelProyecto) || 0)}`}
+                    onChange={(e) => handleCategoriaChange(categoria.id, 'presupuestoDelProyecto', e.target.value.replace(/\$\/|S\//g, '').trim())}
+                      className="w-full text-[9px] border-none outline-none text-left bg-transparent h-4 leading-tight px-0"
+                      placeholder="S/0"
                   />
                   </td>
-                  <td className="border border-gray-400 px-1 py-0.5 bg-white">
+                  <td
+                      className={`border border-gray-400 px-1 py-0 align-middle ${BLOCKED_CONTRACT_CATEGORY_IDS.includes(categoria.id) ? 'bg-gray-300' : 'bg-white'}`}
+                      style={{
+                        width: '100px',
+                        minWidth: '100px',
+                        maxWidth: '100px',
+                        backgroundImage: BLOCKED_CONTRACT_CATEGORY_IDS.includes(categoria.id)
+                          ? 'none'
+                          : 'repeating-linear-gradient(45deg, #f3f4f6 0, #f3f4f6 2px, transparent 2px, transparent 4px)'
+                      }}>
+                  {BLOCKED_CONTRACT_CATEGORY_IDS.includes(categoria.id) ? (
+                    <span
+                      className="w-full inline-block text-[9px] text-left bg-transparent h-4 leading-tight pr-4 select-text cursor-not-allowed text-gray-800"
+                      aria-label="Contrato Proveedor y Servicios (bloqueado)"
+                    >
+                      {categoria.contratoProvedYServ || 'S/0.00'}
+                    </span>
+                  ) : (
+                    <div className="relative w-full">
                   <input
                     type="text"
-                    value={categoria.contratoProvedYServ}
-                    onChange={(e) => handleCategoriaChange(categoria.id, 'contratoProvedYServ', e.target.value)}
-                      className="w-full text-xs border-none outline-none text-left bg-transparent"
-                      placeholder="$/ 0.00"
-                  />
+                        value={`S/${(parseFloat(categoria.contratoProvedYServ) || 0).toFixed(2)}`}
+                    onChange={(e) => handleCategoriaChange(categoria.id, 'contratoProvedYServ', e.target.value.replace(/\$\/|S\//g, '').trim())}
+                        className="w-full text-[9px] border-none outline-none text-left bg-transparent h-4 leading-tight pr-5"
+                        placeholder="S/0.00"
+                      />
+                      <button
+                        type="button"
+                        onClick={(e) => openContratoPopup(categoria, e.currentTarget)}
+                        className="absolute right-[2px] top-1/2 -translate-y-1/2 h-4 w-4 inline-flex items-center justify-center rounded bg-orange-500 text-white hover:bg-orange-600"
+                        title="Editar detalles del contrato"
+                      >
+                        <DocumentIcon className="h-3 w-3" />
+                      </button>
+                    </div>
+                  )}
                   </td>
-                  <td className="border border-gray-400 px-2 py-0.5 bg-white min-w-[140px] w-[140px] text-left">
+                  <td className="border border-gray-400 px-1 py-0 bg-white text-left align-middle" style={{width: '100px', minWidth: '100px', maxWidth: '100px'}}>
+                  <div className="relative w-full">
                   <input
                     type="text"
-                    value={categoria.registroEgresos}
-                    onChange={(e) => handleCategoriaChange(categoria.id, 'registroEgresos', e.target.value)}
-                      className="w-full text-xs border-none outline-none text-left bg-transparent"
-                      placeholder="0"
-                    />
+                      value={`S/${(parseFloat(categoria.registroEgresos) || 0).toFixed(2)}`}
+                    onChange={(e) => handleCategoriaChange(categoria.id, 'registroEgresos', e.target.value.replace(/\$\/|S\//g, '').trim())}
+                        className="w-full text-[9px] border-none outline-none text-left bg-transparent h-4 leading-tight pr-5"
+                        placeholder="S/0.00"
+                      />
+                    <button
+                      type="button"
+                      onClick={() => openEgresoPopup(categoria)}
+                      className="absolute right-[2px] top-1/2 -translate-y-1/2 h-4 w-4 inline-flex items-center justify-center rounded bg-orange-500 text-white hover:bg-orange-600"
+                      title="Registrar egresos y adjunto"
+                    >
+                      <DocumentIcon className="h-3 w-3" />
+                    </button>
+                  </div>
                   </td>
-                  <td className="border border-gray-400 px-1 py-0.5 bg-white text-left">
-                    <span className="text-xs text-red-600 font-semibold">
-                      {categoria.saldosPorCancelar || 'S/ 0.00'}
+                  <td className="border border-gray-400 px-1 py-0 bg-gray-200 text-center align-middle" style={{width: '80px', minWidth: '80px', maxWidth: '80px'}}>
+                    <span className="text-[9px] text-red-600 font-semibold leading-tight">
+                      {categoria.saldosPorCancelar || 'S/0.00'}
                     </span>
                   </td>
                 </tr>
               ))}
               
-              {/* Fila de TOTALES - FÓRMULAS AUTOMÁTICAS */}
-              <tr className="bg-black text-white font-bold h-12 border-t-4 border-gray-600">
-                <td className="border border-gray-400 px-1 py-1 text-left text-xs">
+              {/* Fila de TOTALES - FÓRMULAS AUTOMÁTICAS (siempre visible al hacer scroll) */}
+              <tr className="text-white font-bold h-9 border-t-4 border-gray-600 sticky bottom-0 z-20 bg-black">
+                {/* Columna F vacía en totales */}
+                <td className="border border-gray-400 px-0 py-0 bg-black"></td>
+                {/* Etiqueta TOTALES */}
+                <td className="border border-gray-400 px-1 py-0.5 text-left text-[10px] bg-black" style={{width: '180px', minWidth: '180px', maxWidth: '180px'}}>
                   TOTALES
                 </td>
-                <td className="border border-gray-400 px-1 py-1 text-left text-xs bg-green-600">
+                {/* Totales por columna */}
+                <td className="border border-gray-400 px-1 py-0.5 text-center text-[9px] bg-green-600" style={{width: '70px', minWidth: '70px', maxWidth: '70px'}}>
                   S/ {totalesCalculados.presupuesto.toFixed(2)}
                 </td>
-                <td className="border border-gray-400 px-1 py-1 text-left text-xs bg-blue-600">
+                <td className="border border-gray-400 px-1 py-0.5 text-center text-[9px] bg-blue-600" style={{width: '100px', minWidth: '100px', maxWidth: '100px'}}>
                   S/ {totalesCalculados.contrato.toFixed(2)}
                 </td>
-                <td className="border border-gray-400 px-2 py-1 text-left text-xs bg-red-600 min-w-[140px] w-[140px] font-bold">
+                <td className="border border-gray-400 px-1 py-0.5 text-center text-[9px] bg-red-600 font-bold" style={{width: '100px', minWidth: '100px', maxWidth: '100px'}}>
                   S/ {totalesCalculados.egresos.toFixed(2)}
                 </td>
-                <td className="border border-gray-400 px-1 py-1 text-left text-xs bg-orange-500">
+                <td className="border border-gray-400 px-1 py-0.5 text-center text-[9px] bg-gray-600" style={{width: '80px', minWidth: '80px', maxWidth: '80px'}}>
                   S/ {totalesCalculados.saldos.toFixed(2)}
                 </td>
               </tr>
@@ -1203,161 +1540,188 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
           </table>
         </div>
         </div>
+        </div>
         
         {/* Cuadros del lado derecho - Responsive */}
-        <div className="flex flex-col gap-1 justify-start w-full xl:w-[800px] 2xl:w-[900px] xl:ml-3 2xl:ml-4">
+        <div className="flex-1 min-w-0 flex flex-col gap-1 justify-start w-full">
           {/* Fila superior - Responsive: vertical en móviles, horizontal en pantallas grandes */}
-          <div className="flex flex-col sm:flex-row gap-1 sm:gap-2">
+          <div className="flex flex-col sm:flex-row gap-1 sm:gap-2 min-w-0">
             {/* ANÁLISIS FINANCIERO DEL PROYECTO */}
-            <div className="w-full sm:w-[395px] 2xl:w-[445px] bg-white rounded-lg shadow-lg overflow-hidden">
+            <div className="bg-white rounded-lg shadow-lg overflow-hidden shrink-0 right-panel" style={{ width: '440px' }}>
               <div className="bg-red-600 text-white px-2 py-1 text-xs font-bold flex items-center justify-center">
                 <span>📊 ANÁLISIS FINANCIERO DEL PROYECTO</span>
               </div>
               <div className="p-1">
-                <table className="w-full text-xs">
+                <table className="w-full text-xs" style={{ tableLayout: 'fixed' }}>
+                  <colgroup>
+                    <col className="w-[200px]" />
+                    <col className="w-[120px]" />
+                  </colgroup>
                   <tbody>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Utilidad Estimada Sin Factura</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
                         <input 
                           type="text" 
-                          className="w-full border-none outline-none text-xs px-1 py-0.5" 
-                          placeholder="S/ 0.00" 
-                          value={`S/ ${parseMonetary(projectData.utilidadEstimadaSinFactura) || 0}`}
+                          className="w-full border-none outline-none text-xs px-1 py-0.5 text-left" 
+                          placeholder="S/0.00" 
+                          value={formatMoney(projectData.utilidadEstimadaSinFactura || 0)}
                           onChange={(e) => handleUtilidadEstimadaSFChange(e.target.value)}
                         />
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Utilidad Real Sin Factura</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
-                        {projectData.utilidadRealSinFactura || 'S/ 0.00'}
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
+                        {projectData.utilidadRealSinFactura || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Balance de Utilidad +/-</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
-                        {projectData.balanceUtilidadSinFactura || 'S/ 0.00'}
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
+                        {formatAbsMoney(projectData.balanceUtilidadSinFactura || 0)}
                       </td>
+                    </tr>
+                    {/* Separador visual entre bloques */}
+                    <tr>
+                      <td colSpan={2} className="p-0 bg-black" style={{ height: '8px' }}></td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Utilidad Estimada Con Factura</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
                         <input 
                           type="text" 
-                          className="w-full border-none outline-none text-xs px-1 py-0.5" 
-                          placeholder="S/ 0.00" 
-                          value={`S/ ${parseMonetary(projectData.utilidadEstimadaConFactura) || 0}`}
+                          className="w-full border-none outline-none text-xs px-1 py-0.5 text-left" 
+                          placeholder="S/0.00" 
+                          value={formatMoney(projectData.utilidadEstimadaConFactura || 0)}
                           onChange={(e) => handleUtilidadEstimadaCFChange(e.target.value)}
                         />
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Utilidad Real Con Factura</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
-                        {projectData.utilidadRealConFactura || 'S/ 0.00'}
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
+                        {projectData.utilidadRealConFactura || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Balance de Utilidad</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
-                        {projectData.balanceUtilidadConFactura || 'S/ 0.00'}
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
+                        {formatAbsMoney(projectData.balanceUtilidadConFactura || 0)}
                       </td>
+                    </tr>
+                    {/* Separador visual entre bloques */}
+                    <tr>
+                      <td colSpan={2} className="p-0 bg-black" style={{ height: '8px' }}></td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">IGV - SUNAT 18%</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
-                        {projectData.igvSunat || 'S/ 0.00'}
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
+                        {projectData.igvSunat || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Crédito Fiscal Estimado</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
-                        {projectData.creditoFiscalEstimado || 'S/ 0.00'}
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
+                        {projectData.creditoFiscalEstimado || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Impuesto Estimado del Proyecto</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
-                        {projectData.impuestoEstimadoDelProyecto || 'S/ 0.00'}
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
+                        {projectData.impuestoEstimadoDelProyecto || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Crédito Fiscal Real</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
-                        {projectData.creditoFiscalReal || 'S/ 0.00'}
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
+                        {projectData.creditoFiscalReal || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Impuesto Real del Proyecto</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
-                        {projectData.impuestoRealDelProyecto || 'S/ 0.00'}
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
+                        {projectData.impuestoRealDelProyecto || 'S/0.00'}
                       </td>
+                    </tr>
+                    {/* Separador visual entre bloques */}
+                    <tr>
+                      <td colSpan={2} className="p-0 bg-black" style={{ height: '8px' }}></td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Total Contrato Proveedores</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
-                        {projectData.totalContratoProveedores || 'S/ 0.00'}
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
+                        {projectData.totalContratoProveedores || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Total Saldo Por Pagar Proveedores</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
-                        {projectData.totalSaldoPorPagarProveedores || 'S/ 0.00'}
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
+                        {projectData.totalSaldoPorPagarProveedores || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
-                      <td className="bg-black text-white border border-gray-400 px-1 py-0.5 font-bold text-xs">Balance De Compras Del Proyecto</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-black text-white font-bold text-xs">
-                        {projectData.balanceDeComprasDelProyecto || 'S/ 0.00'}
+                      <td className="bg-white text-black border border-gray-400 px-1 py-0.5 font-bold text-xs" style={{ borderTop: '4px solid #000' }}>
+                        Balance De Compras Del Proyecto
                       </td>
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-black font-bold text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1" style={{ borderTop: '4px solid #000' }}>
+                        {projectData.balanceDeComprasDelProyecto || 'S/0.00'}
+                      </td>
+                    </tr>
+                    {/* Separador visual - bloque inferior */}
+                    <tr>
+                      <td colSpan={2} className="p-0 bg-black" style={{ height: '8px' }}></td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Monto Del Contrato</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
                         <input 
                           type="text" 
-                          className="w-full border-none outline-none text-xs px-1 py-0.5" 
-                          placeholder="S/ 0.00" 
-                          value={`S/ ${parseMonetary(projectData.montoContrato) || 0}`}
+                          className="w-full border-none outline-none text-xs px-1 py-0.5 text-left" 
+                          placeholder="S/0.00" 
+                          value={formatMoney(projectData.montoContrato || 0)}
                           onChange={(e) => handleMontoContratoChange(e.target.value)}
                         />
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Adelantos</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
                         <input 
                           type="text" 
-                          className="w-full border-none outline-none text-xs px-1 py-0.5" 
-                          placeholder="S/ 0.00" 
-                          value={`S/ ${parseMonetary(projectData.adelantos) || 0}`}
+                          className="w-full border-none outline-none text-xs px-1 py-0.5 text-left" 
+                          placeholder="S/0.00" 
+                          value={formatMoney(projectData.adelantos || 0)}
                           onChange={(e) => handleAdelantosChange(e.target.value)}
                         />
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Saldo Por Cobrar</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
-                        {projectData.saldoXCobrar || 'S/ 0.00'}
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
+                        {projectData.saldoXCobrar || 'S/0.00'}
                       </td>
+                    </tr>
+                    {/* Separador visual - antes de presupuesto/egresos */}
+                    <tr>
+                      <td colSpan={2} className="p-0 bg-black" style={{ height: '8px' }}></td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Presupuesto Del Proyecto</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
-                        {projectData.presupuestoProyecto || 'S/ 0.00'}
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
+                        {projectData.presupuestoProyecto || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Total de Egresos del Proyecto</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
-                        {projectData.totalEgresosProyecto || 'S/ 0.00'}
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
+                        {projectData.totalEgresosProyecto || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
-                      <td className="bg-black text-white border border-gray-400 px-1 py-0.5 font-bold text-xs">Balance Del Presupuesto</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-black text-white font-bold text-xs">
-                        {projectData.balanceDelPresupuesto || 'S/ 0.00'}
+                      <td className="bg-white text-black border border-gray-400 px-1 py-0.5 font-bold text-xs" style={{ borderBottom: '4px solid #000' }}>Balance Del Presupuesto</td>
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-black font-bold text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1" style={{ borderBottom: '4px solid #000' }}>
+                        {projectData.balanceDelPresupuesto || 'S/0.00'}
                       </td>
                     </tr>
                   </tbody>
@@ -1365,42 +1729,269 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
               </div>
             </div>
 
-            {/* COBRANZAS DEL PROYECTO */}
-            <div className="w-full sm:w-[395px] 2xl:w-[445px] bg-white rounded-lg shadow-lg overflow-hidden">
+            {/* Panel de Cobranzas removido: ahora se gestiona desde el botón 'Abrir' en Monto del Contrato (popup). */}
+          </div>
+        </div>
+      </div>
+
+      {/* 🧾 POPUP POR-CELDA: DETALLES DEL CONTRATO DE SERVICIO */}
+      {contratoPopupOpenFor && (
+        <>
+          {/* Capa para cerrar al hacer click fuera */}
+          <div className="fixed inset-0 z-40" onClick={closeContratoPopup} />
+          {/* Panel anclado a la celda */}
+          <div
+            className="fixed z-50 bg-white rounded-lg shadow-2xl w-[680px] max-w-[95vw] max-h-[80vh] overflow-y-auto border border-gray-200"
+            style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}
+          >
+            {/* Header */}
+            <div className="bg-gradient-to-r from-orange-500 to-orange-600 px-3 py-2 rounded-t-lg flex justify-between items-center">
+              <div className="text-white font-semibold text-sm">Contrato de Servicio</div>
+              <button onClick={closeContratoPopup} className="text-white/90 hover:text-white">
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Body (layout horizontal) */}
+            <div className="p-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* Columna izquierda: Proveedor + Descripción */}
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-[11px] font-medium text-gray-600 mb-1">Proveedor / Empresa</label>
+                    <input
+                      type="text"
+                      value={contratoForm.proveedor}
+                      onChange={(e) => setContratoForm(f => ({ ...f, proveedor: e.target.value }))}
+                      className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                      placeholder="Nombre del proveedor"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-gray-600 mb-1">Descripción del Servicio</label>
+                    <textarea
+                      value={contratoForm.descripcion}
+                      onChange={(e) => setContratoForm(f => ({ ...f, descripcion: e.target.value }))}
+                      className="w-full border border-gray-300 rounded px-2 py-1 text-sm min-h-[140px] resize-y"
+                      placeholder="Descripción breve del servicio"
+                    />
+                  </div>
+                </div>
+
+                {/* Columna derecha: Monto + Abonos */}
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-[11px] font-medium text-gray-600 mb-1">Monto del Contrato</label>
+                    <input
+                      type="text"
+                      value={contratoForm.monto}
+                      onChange={(e) => setContratoForm(f => ({ ...f, monto: e.target.value }))}
+                      className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                      placeholder="S/0.00"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="bg-gray-700 text-white px-2 py-1 text-xs font-bold rounded-t">Abonos al Servicio (máx. 5)</div>
+                    <div className="border border-gray-300 rounded-b overflow-y-auto max-h-48">
+                      <div className="grid grid-cols-2 text-xs font-semibold bg-gray-100 border-b border-gray-300 sticky top-0">
+                        <div className="px-2 py-1">Fecha</div>
+                        <div className="px-2 py-1">Monto</div>
+                      </div>
+                      {contratoForm.abonos.map((a, idx) => (
+                        <div key={idx} className="grid grid-cols-2 border-t border-gray-200">
+                          <input
+                            type="date"
+                            value={a.fecha}
+                            onChange={(e) => setContratoForm(f => {
+                              const ab = [...f.abonos]; ab[idx] = { ...ab[idx], fecha: e.target.value }; return { ...f, abonos: ab };
+                            })}
+                            className="px-2 py-1 text-sm border-r border-gray-200"
+                          />
+                          <input
+                            type="text"
+                            value={a.monto}
+                            onChange={(e) => setContratoForm(f => {
+                              const ab = [...f.abonos]; ab[idx] = { ...ab[idx], monto: e.target.value }; return { ...f, abonos: ab };
+                            })}
+                            className="px-2 py-1 text-sm"
+                            placeholder="S/0.00"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-3 py-2 bg-gray-50 border-t border-gray-200 flex justify-end gap-2 rounded-b-lg">
+              <button onClick={closeContratoPopup} className="px-3 py-1.5 rounded border border-gray-300 text-gray-700 text-sm">Cancelar</button>
+              <button onClick={saveContratoPopup} className="px-3 py-1.5 rounded bg-orange-500 text-white text-sm hover:bg-orange-600">Guardar</button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* 💸 POPUP POR-CELDA: REGISTRO DE EGRESOS (con adjunto PDF) */}
+      {egresoPopupOpenFor && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={closeEgresoPopup} />
+          <div
+            className="fixed z-50 bg-white rounded-lg shadow-2xl w-[680px] max-w-[95vw] max-h-[80vh] overflow-y-auto border border-gray-200"
+            style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}
+          >
+            {/* Header */}
+            <div className="bg-gradient-to-r from-red-500 to-red-600 px-3 py-2 rounded-t-lg flex justify-between items-center">
+              <div className="text-white font-semibold text-sm">Registro de Egresos</div>
+              <button onClick={closeEgresoPopup} className="text-white/90 hover:text-white">
+                <XMarkIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-3 space-y-3">
+              {/* Tabla (Fecha | Egreso) */}
+              <div>
+                <div className="bg-gray-700 text-white px-2 py-1 text-xs font-bold rounded-t">Egresos del Servicio (máx. 5)</div>
+                <div className="border border-gray-300 rounded-b overflow-hidden">
+                  <div className="grid grid-cols-2 text-xs font-semibold bg-gray-100 border-b border-gray-300">
+                    <div className="px-2 py-1">Fecha</div>
+                    <div className="px-2 py-1">Egreso</div>
+                  </div>
+                  {egresoForm.items.map((it, idx) => (
+                    <div key={idx} className="grid grid-cols-2 border-t border-gray-200">
+                      <input
+                        type="date"
+                        value={it.fecha}
+                        onChange={(e) => setEgresoForm(f => {
+                          const items = [...f.items]; items[idx] = { ...items[idx], fecha: e.target.value }; return { ...f, items };
+                        })}
+                        className="px-2 py-1 text-sm border-r border-gray-200"
+                      />
+                      <input
+                        type="text"
+                        value={it.monto}
+                        onChange={(e) => setEgresoForm(f => {
+                          const items = [...f.items]; items[idx] = { ...items[idx], monto: e.target.value }; return { ...f, items };
+                        })}
+                        className="px-2 py-1 text-sm"
+                        placeholder="S/0.00"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Descripción */}
+              <div>
+                <label className="block text-[11px] font-medium text-gray-600 mb-1">Descripción:</label>
+                <textarea
+                  value={egresoForm.descripcion}
+                  onChange={(e) => setEgresoForm(f => ({ ...f, descripcion: e.target.value }))}
+                  className="w-full border border-gray-300 rounded px-2 py-1 text-sm min-h-[70px] resize-y"
+                  placeholder="Descripción del egreso"
+                />
+              </div>
+
+              {/* Adjuntar/Ver/Eliminar PDF */}
+              <div className="flex items-center gap-2">
+                <input
+                  ref={egresoFileInputRef}
+                  type="file"
+                  accept="application/pdf"
+                  className="hidden"
+                  onChange={handleEgresoFilePick}
+                />
+                <button
+                  onClick={() => egresoFileInputRef.current?.click()}
+                  className="px-3 py-1.5 rounded bg-red-600 text-white text-sm hover:bg-red-700"
+                >
+                  Adjuntar PDF
+                </button>
+                <button
+                  onClick={viewEgresoPdf}
+                  disabled={!egresoForm.pdfData}
+                  className={`px-3 py-1.5 rounded text-sm ${egresoForm.pdfData ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}
+                >
+                  Ver PDF
+                </button>
+                <button
+                  onClick={deleteEgresoPdf}
+                  disabled={!egresoForm.pdfData}
+                  className={`px-3 py-1.5 rounded text-sm ${egresoForm.pdfData ? 'bg-gray-700 text-white hover:bg-gray-800' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}
+                >
+                  Eliminar PDF
+                </button>
+                {egresoForm.pdfName && <span className="text-xs text-gray-600 truncate">Archivo: {egresoForm.pdfName}</span>}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-3 py-2 bg-gray-50 border-t border-gray-200 flex justify-end gap-2 rounded-b-lg">
+              <button onClick={closeEgresoPopup} className="px-3 py-1.5 rounded border border-gray-300 text-gray-700 text-sm">Cancelar</button>
+              <button onClick={saveEgresoPopup} className="px-3 py-1.5 rounded bg-red-600 text-white text-sm hover:bg-red-700">Guardar</button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* 💚 POPUP: COBRANZAS DEL PROYECTO (desde Monto del Contrato) */}
+      {cobranzasPopupOpen && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/20" onClick={() => setCobranzasPopupOpen(false)} />
+          <div ref={cobranzasPopupRef} className="fixed z-50 bg-white rounded-lg shadow-2xl w-[760px] max-w-[95vw] max-h-[85vh] overflow-y-auto border border-green-600" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
+            {/* Header verde */}
+            <div className="bg-green-600 text-white px-3 py-2 text-sm font-bold flex items-center justify-between rounded-t-lg">
+              <span>💰 Cobranzas del Proyecto</span>
+              <div className="flex items-center gap-2">
+                <button onClick={handlePrintCobranzas} className="bg-white text-green-700 px-2 py-1 rounded text-xs hover:bg-gray-100">
+                  Generar PDF
+                </button>
+                <button onClick={() => setCobranzasPopupOpen(false)} className="text-white/90 hover:text-white">
+                  <XMarkIcon className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-3">
+              {/* Reutilizamos el mismo panel de cobranzas */}
+              <div className="border border-gray-300 rounded">
             <div className="bg-green-600 text-white px-2 py-1 text-xs font-bold flex items-center justify-center">
               <span>💰 COBRANZAS DEL PROYECTO</span>
             </div>
-            <div className="p-1">
+                <div className="p-1 bg-white">
               <table className="w-full text-xs">
                 <tbody>
                   <tr>
                     <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">MONTO DEL CONTRATO</td>
-                    <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
+                        <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
                       <input 
                         type="text" 
-                        className="w-full border-none outline-none text-xs px-1 py-0.5" 
-                        placeholder="S/ 0.00" 
-                        value={`S/ ${parseMonetary(projectData.montoContrato) || 0}`}
+                        className="w-full border-none outline-none text-xs px-1 py-0.5 text-left" 
+                            placeholder="S/0.00"
+                            value={formatMoney(projectData.montoContrato || 0)}
                         onChange={(e) => handleMontoContratoChange(e.target.value)}
                       />
                     </td>
                   </tr>
                   {projectData.cobranzas?.map((cobranza, index) => (
-                  <tr key={cobranza.id}>
-                    <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 text-xs">
+                        <tr key={`popup-${cobranza.id}`}>
+                          <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 text-xs w-[110px] max-w-[110px]">
                       <input 
                         type="date" 
-                        className="w-full border-none outline-none text-xs px-1 py-0.5 bg-gray-100" 
+                              className="w-full border-none outline-none text-xs px-1 py-0.5 bg-gray-100 text-center"
                         value={cobranza.fecha || ''}
                         onChange={(e) => handleCobranzaChange(index, 'fecha', e.target.value)}
                       />
                     </td>
-                    <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs">
+                          <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px]">
                       <input 
                         type="text" 
-                        className="w-full border-none outline-none text-xs px-1 py-0.5" 
-                        placeholder="S/ 0.00" 
-                        value={`S/ ${cobranza.monto || 0}`}
+                        className="w-full border-none outline-none text-xs px-1 py-0.5 text-left" 
+                              placeholder="S/0.00"
+                              value={(parseFloat(cobranza.monto) || 0) === 0 ? '' : formatMoney(cobranza.monto || 0)}
                         onChange={(e) => handleCobranzaChange(index, 'monto', e.target.value)}
                       />
                     </td>
@@ -1408,28 +1999,60 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                   ))}
                   <tr>
                     <td className="bg-black text-white border border-gray-400 px-1 py-0.5 font-bold text-xs">SALDO X COBRAR</td>
-                    <td className="border border-gray-400 px-1 py-0.5 bg-black text-white font-bold text-xs">S/ {calcularTotalCobranzas().toFixed(2)}</td>
+                        <td className="border border-gray-400 px-1 py-0.5 bg-black text-white font-bold text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
+                          {formatMoney(calcularSaldoRestante())}
+                        </td>
                   </tr>
                 </tbody>
               </table>
-              
-              {/* OBSERVACIONES DEL PROYECTO - Parte inferior del cuadro COBRANZAS */}
-              <div className="mt-2 border-t border-gray-300 pt-2">
-                <div className="bg-gray-700 text-white px-2 py-1 text-xs font-bold flex items-center justify-center rounded-t">
-                  <span>📝 OBSERVACIONES DEL PROYECTO</span>
-                </div>
-                <div className="p-1 bg-gray-50 rounded-b">
-                  <textarea 
-                    className="w-full h-12 sm:h-16 border border-gray-300 rounded p-1 text-xs resize-none"
-                    placeholder="Escriba aquí las observaciones del proyecto..."
-                  ></textarea>
                 </div>
               </div>
+
+              {/* Adjuntos (hasta 10) */}
+              <div className="mt-3">
+                <div className="bg-green-700 text-white px-2 py-1 text-xs font-bold rounded-t">Adjuntos (PDF, Imágenes) máx. 10</div>
+                <div className="border border-green-200 rounded-b p-2 space-y-2 bg-white">
+                  <div className="flex items-center gap-2">
+                    <input
+                      ref={cobranzasFilesInputRef}
+                      type="file"
+                      accept="application/pdf,image/*"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => addCobranzasFiles(e.target.files)}
+                    />
+                    <button
+                      onClick={() => cobranzasFilesInputRef.current?.click()}
+                      className="px-3 py-1.5 rounded bg-green-600 text-white text-xs hover:bg-green-700"
+                    >
+                      Adjuntar archivos
+                    </button>
+                    <span className="text-xs text-gray-600">{cobranzasFiles.length}/10</span>
+                </div>
+                  {cobranzasFiles.length > 0 && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {cobranzasFiles.map((f) => (
+                        <div key={f.id} className="flex items-center justify-between border rounded px-2 py-1">
+                          <span className="text-xs text-gray-700 truncate mr-2">{f.name}</span>
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => viewCobranzasFile(f)} className="px-2 py-0.5 rounded bg-blue-600 text-white text-xs hover:bg-blue-700">Ver</button>
+                            <button onClick={() => removeCobranzasFile(f.id)} className="px-2 py-0.5 rounded bg-gray-700 text-white text-xs hover:bg-gray-800">Eliminar</button>
+                </div>
+              </div>
+                      ))}
             </div>
+                  )}
             </div>
           </div>
         </div>
+
+            {/* Footer */}
+            <div className="px-3 py-2 bg-gray-50 border-t border-gray-200 flex justify-end gap-2 rounded-b-lg">
+              <button onClick={() => setCobranzasPopupOpen(false)} className="px-3 py-1.5 rounded border border-gray-300 text-gray-700 text-sm">Cerrar</button>
       </div>
+          </div>
+        </>
+      )}
 
     {/* 📄 POPUP DE DOCUMENTOS DEL PROYECTO - DISEÑO EXACTO IMAGEN */}
       {documentosPopupOpen && (

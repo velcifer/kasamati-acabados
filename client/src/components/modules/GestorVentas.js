@@ -810,7 +810,7 @@ const GestorVentas = () => {
                 }`}>
                   {/* Filtro por Estado */}
                   <div className={screenSize === 'ultra-small' ? 'space-y-1' : 'space-y-2'}>
-                    <label className={`block text-white/80 font-medium ${
+                    <label className={`block text-white font-semibold ${
                       screenSize === 'ultra-small' ? 'text-[10px]' : 'text-xs'
                     }`}>
                       Estado
@@ -818,9 +818,17 @@ const GestorVentas = () => {
                     <select
                       value={filters.estado}
                       onChange={(e) => handleFilterChange('estado', e.target.value)}
-                      className={`w-full bg-white/10 border border-white/20 rounded text-white focus:bg-white/20 focus:border-blue-400/50 focus:outline-none transition-colors ${
-                        screenSize === 'ultra-small' ? 'px-2 py-1 text-[9px]' : 'px-3 py-2 text-xs'
+                      className={`w-full bg-gray-800/90 border-2 border-gray-600 rounded-lg text-white shadow-lg focus:bg-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all ${
+                        screenSize === 'ultra-small' ? 'px-2 py-1.5 text-[9px]' : 'px-3 py-2.5 text-xs'
                       }`}
+                      style={{
+                        appearance: 'none',
+                        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23ffffff'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E")`,
+                        backgroundRepeat: 'no-repeat',
+                        backgroundPosition: 'right 0.5rem center',
+                        backgroundSize: '1rem',
+                        paddingRight: screenSize === 'ultra-small' ? '1.75rem' : '2.5rem'
+                      }}
                     >
                       <option value="" className="bg-gray-800 text-white">Todos los estados</option>
                       <option value="Cotizando" className="bg-gray-800 text-white">Cotizando</option>
@@ -834,7 +842,7 @@ const GestorVentas = () => {
                   {/* Filtro por Cliente - Solo en pantallas no ultra-small o como segundo filtro */}
                   {(screenSize !== 'ultra-small' || !filters.estado) && (
                     <div className={screenSize === 'ultra-small' ? 'space-y-1' : 'space-y-2'}>
-                      <label className={`block text-white/80 font-medium ${
+                      <label className={`block text-white font-semibold ${
                         screenSize === 'ultra-small' ? 'text-[10px]' : 'text-xs'
                       }`}>
                         Cliente
@@ -844,8 +852,8 @@ const GestorVentas = () => {
                         value={filters.cliente}
                         onChange={(e) => handleFilterChange('cliente', e.target.value)}
                         placeholder={screenSize === 'ultra-small' ? 'Cliente...' : 'Buscar por cliente...'}
-                        className={`w-full bg-white/10 border border-white/20 rounded text-white placeholder-white/50 focus:bg-white/20 focus:border-blue-400/50 focus:outline-none transition-colors ${
-                          screenSize === 'ultra-small' ? 'px-2 py-1 text-[9px]' : 'px-3 py-2 text-xs'
+                        className={`w-full bg-gray-800/90 border-2 border-gray-600 rounded-lg text-white placeholder-white/60 shadow-lg focus:bg-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all ${
+                          screenSize === 'ultra-small' ? 'px-2 py-1.5 text-[9px]' : 'px-3 py-2.5 text-xs'
                         }`}
                       />
                     </div>
@@ -854,7 +862,7 @@ const GestorVentas = () => {
                   {/* Filtro por Requerimiento - Solo en pantallas normales */}
                   {screenSize !== 'ultra-small' && screenSize !== 'mobile' && (
                     <div className="space-y-2">
-                      <label className="block text-xs text-white/80 font-medium">
+                      <label className="block text-xs text-white font-semibold">
                         Requerimiento
                       </label>
                       <input
@@ -862,7 +870,7 @@ const GestorVentas = () => {
                         value={filters.requerimiento}
                         onChange={(e) => handleFilterChange('requerimiento', e.target.value)}
                         placeholder="Buscar por requerimiento..."
-                        className="w-full px-3 py-2 text-xs bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/50 focus:bg-white/20 focus:border-blue-400/50 focus:outline-none transition-colors"
+                        className="w-full px-3 py-2.5 text-xs bg-gray-800/90 border-2 border-gray-600 rounded-lg text-white placeholder-white/60 shadow-lg focus:bg-gray-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
                       />
                     </div>
                   )}

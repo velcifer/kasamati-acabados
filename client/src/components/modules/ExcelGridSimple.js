@@ -24,7 +24,7 @@ const ExcelGridSimple = () => {
   
   // Sistema de eliminación
   const [showDeletePopup, setShowDeletePopup] = useState(false);
-  const [selectedRowsToDelete, setSelectedRowsToDelete] = useState([]);
+  const [selectedRowsToDelete, setSelectedRowsToDelete] = useState([]); // almacena keys tal cual (string)
   
   // 📱 Estado para menú lateral móvil
   const [showMobileMenu, setShowMobileMenu] = useState(false);
@@ -87,7 +87,61 @@ const ExcelGridSimple = () => {
   }, []);
 
   // 📊 Datos de proyectos con sincronización automática
-  const { data, updateCell, createProject: createNewProject, deleteProject } = useExcelGrid();
+  const { data: rawData, updateCell, createProject: createNewProject, deleteProject } = useExcelGrid();
+  
+  // 🧹 FILTRO DE SEGURIDAD: Eliminar filas corruptas ANTES de renderizar
+  const data = useMemo(() => {
+    if (!rawData || typeof rawData !== 'object') return {};
+    
+    const cleanData = {};
+    let hasCorruptedRows = false;
+    
+    Object.keys(rawData).forEach(key => {
+      const proyecto = rawData[key];
+      
+      // Validar que el proyecto sea válido
+      if (proyecto && 
+          proyecto.nombreProyecto && 
+          typeof proyecto.nombreProyecto === 'string' &&
+          proyecto.nombreProyecto !== 'undefined' &&
+          proyecto.nombreProyecto !== 'null' &&
+          proyecto.nombreProyecto.trim() !== '') {
+        cleanData[key] = proyecto;
+      } else {
+        console.error('🗑️ FILA CORRUPTA DETECTADA Y ELIMINADA:', {
+          key,
+          nombreProyecto: proyecto?.nombreProyecto,
+          proyecto: proyecto
+        });
+        hasCorruptedRows = true;
+        
+        // Eliminar del localStorage inmediatamente
+        try {
+          const proyectosData = localStorage.getItem('ksamati_projects');
+          if (proyectosData) {
+            const proyectos = JSON.parse(proyectosData);
+            if (proyectos[key]) {
+              delete proyectos[key];
+              localStorage.setItem('ksamati_projects', JSON.stringify(proyectos));
+              console.log('💾 Fila corrupta eliminada del localStorage:', key);
+            }
+          }
+        } catch (e) {
+          console.error('Error al limpiar localStorage:', e);
+        }
+      }
+    });
+    
+    // Si había filas corruptas, mostrar alerta
+    if (hasCorruptedRows) {
+      console.warn('⚠️ Se detectaron y eliminaron filas corruptas. Recargando en 2 segundos...');
+      setTimeout(() => {
+        window.location.reload();
+      }, 2000);
+    }
+    
+    return cleanData;
+  }, [rawData]);
   
   // 🔍 Estados para filtros
   const [filters, setFilters] = useState({
@@ -97,13 +151,109 @@ const ExcelGridSimple = () => {
     tipoProyecto: ''
   });
   
-  // 🔄 Cargar datos iniciales - Ya no necesario con hook useExcelGrid
+  // 🔄 Cargar datos iniciales y limpieza forzada
   useEffect(() => {
+    // LIMPIEZA ULTRA FORZADA de filas corruptas
+    const ultraCleanCorruptedRows = () => {
+      try {
+        console.log('🧹🔥 LIMPIEZA ULTRA FORZADA INICIADA...');
+        const proyectosData = localStorage.getItem('proyectos');
+        
+        if (proyectosData) {
+          let proyectos = JSON.parse(proyectosData);
+          const originalLength = proyectos.length;
+          
+          console.log('📊 Total de proyectos ANTES:', originalLength);
+          console.log('📋 Datos RAW:', proyectos);
+          
+          // FILTRO ULTRA ESTRICTO: Validar TODOS los campos críticos
+          const cleanProyectos = proyectos.filter((p, index) => {
+            console.log(`\n🔍 Analizando fila ${index}:`, p);
+            
+            // 1. Verificar que el proyecto exista
+            if (!p || p === null || p === undefined) {
+              console.log(`❌ Fila ${index}: es null/undefined`);
+              return false;
+            }
+            
+            // 2. Verificar que sea un objeto válido
+            if (typeof p !== 'object') {
+              console.log(`❌ Fila ${index}: no es un objeto`);
+              return false;
+            }
+            
+            // 3. Verificar ID válido (número positivo)
+            if (!p.id || typeof p.id !== 'number' || isNaN(p.id) || p.id <= 0) {
+              console.log(`❌ Fila ${index}: ID inválido (${p.id}) tipo: ${typeof p.id}`);
+              return false;
+            }
+            
+            // 4. Verificar nombreProyecto válido (no vacío, no "undefined")
+            if (!p.nombreProyecto || 
+                typeof p.nombreProyecto !== 'string' || 
+                p.nombreProyecto.trim() === '' ||
+                p.nombreProyecto === 'undefined' ||
+                p.nombreProyecto === 'null') {
+              console.log(`❌ Fila ${index}: nombreProyecto inválido ("${p.nombreProyecto}")`);
+              return false;
+            }
+            
+            // 5. Verificar que tenga al menos los campos básicos
+            const requiredFields = ['estadoProyecto', 'tipoProyecto'];
+            const hasRequiredFields = requiredFields.every(field => p[field] !== undefined);
+            if (!hasRequiredFields) {
+              console.log(`❌ Fila ${index}: faltan campos requeridos`);
+              return false;
+            }
+            
+            // ✅ La fila pasó TODAS las validaciones
+            console.log(`✅ Fila ${index}: VÁLIDA - ID:${p.id}, Nombre:"${p.nombreProyecto}"`);
+            return true;
+          });
+          
+          const removedCount = originalLength - cleanProyectos.length;
+          console.log(`\n📊 RESULTADO:`);
+          console.log(`   - Filas originales: ${originalLength}`);
+          console.log(`   - Filas válidas: ${cleanProyectos.length}`);
+          console.log(`   - Filas eliminadas: ${removedCount}`);
+          
+          if (removedCount > 0) {
+            console.log(`\n🗑️ ELIMINANDO ${removedCount} fila(s) corrupta(s)...`);
+            console.log('📋 Proyectos que SE MANTIENEN:', cleanProyectos);
+            
+            // Guardar los datos limpios
+            localStorage.setItem('proyectos', JSON.stringify(cleanProyectos));
+            console.log('💾 Datos limpios guardados en localStorage');
+            
+            // Forzar recarga inmediata sin esperar
+            console.log('🔄 RECARGANDO PÁGINA AHORA...');
+            window.location.reload();
+            return;
+          } else {
+            console.log('✅ No se encontraron filas corruptas. Datos OK.');
+          }
+        } else {
+          console.log('ℹ️ No hay datos en localStorage - iniciando desde cero');
+        }
+      } catch (error) {
+        console.error('💥 ERROR CRÍTICO al limpiar:', error);
+        console.error('Stack:', error.stack);
+        // En caso de error grave, limpiar COMPLETAMENTE
+        console.log('🚨 LIMPIANDO TODO EL LOCALSTORAGE...');
+        localStorage.clear();
+        console.log('🔄 Recargando...');
+        window.location.reload();
+      }
+    };
+
+    // Ejecutar limpieza INMEDIATAMENTE al montar el componente
+    ultraCleanCorruptedRows();
+    
     // Los datos se cargan automáticamente con useExcelGrid
     setLoading(false);
     setSyncMessage('✅ Datos sincronizados automáticamente');
     setTimeout(() => setSyncMessage(''), 2000);
-  }, [data]);
+  }, []);
 
   const loadProjectsData = async () => {
     try {
@@ -575,12 +725,12 @@ const ExcelGridSimple = () => {
     return Object.fromEntries(filteredEntries);
   };
 
-  const handleToggleRowSelection = (rowIndex) => {
+  const handleToggleRowSelection = (rowKey) => {
     setSelectedRowsToDelete(prev => {
-      if (prev.includes(rowIndex)) {
-        return prev.filter(idx => idx !== rowIndex);
+      if (prev.includes(rowKey)) {
+        return prev.filter(idx => idx !== rowKey);
       } else {
-        return [...prev, rowIndex];
+        return [...prev, rowKey];
       }
     });
   };
@@ -594,16 +744,16 @@ const ExcelGridSimple = () => {
       console.log('🗑️ INICIANDO eliminación de filas:', selectedRowsToDelete);
       
       // 🔄 PASO 1: ELIMINAR INMEDIATAMENTE DEL ESTADO LOCAL (UI PRIMERO)
-      const deletedProjectNames = selectedRowsToDelete.map(rowIndex => 
-        data[rowIndex]?.nombreProyecto || `Proyecto ${rowIndex}`
+      const deletedProjectNames = selectedRowsToDelete.map(rowKey => 
+        data[rowKey]?.nombreProyecto || `Proyecto ${rowKey}`
       );
       
       console.log('📝 Proyectos a eliminar:', deletedProjectNames);
       
       // 🔄 SISTEMA NUEVO: Usar deleteProject del hook para cada proyecto
-      selectedRowsToDelete.forEach(rowIndex => {
-        console.log(`🗑️ Eliminando proyecto ${rowIndex} con hook:`, data[rowIndex]?.nombreProyecto);
-        deleteProject(rowIndex);
+      selectedRowsToDelete.forEach(rowKey => {
+        console.log(`🗑️ Eliminando proyecto ${rowKey} con hook:`, data[rowKey]?.nombreProyecto);
+        deleteProject(rowKey);
       });
       
       console.log('📊 Proyectos eliminados automáticamente con hook');
@@ -632,7 +782,7 @@ const ExcelGridSimple = () => {
       
       // 🔄 PASO 4: ACTUALIZAR NEXT PROJECT NUMBER
       const remainingProjects = Object.keys(data).filter(key => 
-        !selectedRowsToDelete.includes(parseInt(key))
+        !selectedRowsToDelete.includes(key)
       );
       const newNextNumber = remainingProjects.length + 1;
       setNextProjectNumber(newNextNumber);
@@ -1142,7 +1292,8 @@ const ExcelGridSimple = () => {
         </>
       )}
 
-      {/* Sistema de Pestañas - Estilo Excel Responsive */}
+      {/* Sistema de Pestañas - Estilo Excel Responsive (oculto en vista detalle) */}
+      {activeTab === 'principal' && (
       <div className="bg-white/5 border-b border-white/20 px-1 sm:px-2 lg:px-6 overflow-x-auto">
         <div className="flex items-end space-x-1 min-w-max">
           {/* Pestaña Principal Responsive */}
@@ -1189,6 +1340,7 @@ const ExcelGridSimple = () => {
           </button>
         </div>
       </div>
+      )}
 
       {/* Renderización condicional: Hoja Principal o Detalle de Proyecto */}
       {activeTab === 'principal' ? (
@@ -1563,14 +1715,12 @@ const ExcelGridSimple = () => {
                   >
                     <input
                       type="checkbox"
-                      checked={selectedRowsToDelete.includes(parseInt(rowIndex))}
-                      onChange={() => handleToggleRowSelection(parseInt(rowIndex))}
+                      checked={selectedRowsToDelete.includes(rowIndex)}
+                      onChange={() => handleToggleRowSelection(rowIndex)}
                       className="w-4 h-4 text-red-500 bg-white/10 border-white/30 rounded focus:ring-red-500 focus:ring-2"
                     />
                     <div className="flex-1 min-w-0">
-                      <div className="text-white text-sm font-medium truncate">
-                        Fila {rowIndex}: {rowData.nombreProyecto || 'Sin nombre'}
-                      </div>
+                      <div className="text-white text-sm font-medium truncate">{rowData.nombreProyecto || 'Sin nombre'}</div>
                       <div className="text-white/60 text-xs truncate">
                         Cliente: {rowData.nombreCliente || 'Sin cliente'} | Estado: {rowData.estadoProyecto}
                       </div>
