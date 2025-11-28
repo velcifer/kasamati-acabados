@@ -1369,7 +1369,6 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
             </div>
 
 
-
         {/* Barra superior: Monto del Contrato (entrada rápida) */}
         <div className="px-3 py-2 bg-white border-b border-gray-200 flex items-center justify-between">
           <span className="text-xs font-semibold text-gray-700">Monto del Contrato</span>

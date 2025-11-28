@@ -1,10 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
-  ShoppingCartIcon, 
   FolderIcon, 
-  BellIcon, 
-  CalendarIcon,
   ArrowLeftIcon
 } from '@heroicons/react/24/outline';
 
@@ -61,16 +58,6 @@ const HomeScreen = () => {
 
   const menuItems = [
     {
-      id: 'ventas',
-      title: 'Gestor Ventas',
-      description: 'Administra tus ventas y clientes',
-      icon: ShoppingCartIcon,
-      gradient: 'from-blue-500 to-cyan-600',
-      hoverGradient: 'hover:from-blue-600 hover:to-cyan-700',
-      shadowColor: 'shadow-blue-500/25',
-      path: '/ventas'
-    },
-    {
       id: 'proyectos',
       title: 'Gestor Proyectos',
       description: 'Gestiona proyectos y tareas',
@@ -79,26 +66,6 @@ const HomeScreen = () => {
       hoverGradient: 'hover:from-green-600 hover:to-emerald-700',
       shadowColor: 'shadow-green-500/25',
       path: '/proyectos'
-    },
-    {
-      id: 'alertas',
-      title: 'Alertas',
-      description: 'Notificaciones importantes',
-      icon: BellIcon,
-      gradient: 'from-red-500 to-pink-600',
-      hoverGradient: 'hover:from-red-600 hover:to-pink-700',
-      shadowColor: 'shadow-red-500/25',
-      path: '/alertas'
-    },
-    {
-      id: 'citas',
-      title: 'Agendar Citas',
-      description: 'Programa reuniones y citas',
-      icon: CalendarIcon,
-      gradient: 'from-purple-500 to-violet-600',
-      hoverGradient: 'hover:from-purple-600 hover:to-violet-700',
-      shadowColor: 'shadow-purple-500/25',
-      path: '/citas'
     }
   ];
 
@@ -195,14 +162,15 @@ const HomeScreen = () => {
           <div className={screenSize === 'ultra-small' ? 'w-8' : 'w-16'}></div> {/* Espaciador para centrar el título */}
         </div>
 
-        {/* Grid de botones del menú ULTRA-RESPONSIVE */}
-        <div className={`grid animate-fade-in ${
-          screenSize === 'ultra-small' ? 'grid-cols-2 gap-3' :
-          screenSize === 'mobile' ? 'grid-cols-2 gap-4' :
-          screenSize === 'small-tablet' ? 'grid-cols-2 gap-5' :
-          screenSize === 'tablet' ? 'grid-cols-2 lg:grid-cols-4 gap-5' :
-          'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6'
-        }`}>
+        {/* Grid de botones del menú ULTRA-RESPONSIVE - Centrado */}
+        <div className={`flex justify-center items-center animate-fade-in`}>
+          <div className={`grid ${
+            screenSize === 'ultra-small' ? 'grid-cols-1 gap-3' :
+            screenSize === 'mobile' ? 'grid-cols-1 gap-4' :
+            screenSize === 'small-tablet' ? 'grid-cols-1 gap-5' :
+            screenSize === 'tablet' ? 'grid-cols-1 gap-5' :
+            'grid-cols-1 gap-6'
+          }`}>
           {menuItems.map((item, index) => {
             const IconComponent = item.icon;
             
@@ -212,7 +180,7 @@ const HomeScreen = () => {
                 className={`group relative backdrop-blur-md bg-white/10 rounded-2xl border border-white/20 shadow-2xl ${item.shadowColor} hover:shadow-xl hover:scale-105 cursor-pointer animate-slide-up transition-all duration-300 hover:bg-white/20 ${
                   screenSize === 'ultra-small' ? 'p-3' :
                   screenSize === 'mobile' ? 'p-4' : 'p-6'
-                }`}
+                } ${screenSize !== 'ultra-small' && screenSize !== 'mobile' ? 'max-w-md mx-auto' : ''}`}
                 style={{ animationDelay: `${index * 100}ms` }}
                 onClick={(event) => handleNavigation(item.path, event)}
               >
@@ -264,6 +232,7 @@ const HomeScreen = () => {
               </div>
             );
           })}
+          </div>
         </div>
 
         {/* Información adicional */}
