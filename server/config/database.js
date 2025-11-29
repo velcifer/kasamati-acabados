@@ -15,8 +15,7 @@ const dbConfig = {
   queueLimit: 0,
   
   // 🚀 CONFIGURACIÓN ADICIONAL (solo opciones válidas para mysql2)
-  acquireTimeout: 60000,  // ✅ Válido para pool
-  idleTimeout: 600000,    // ✅ Válido para pool 
+  connectTimeout: 60000,
   timezone: '+00:00',
   charset: 'utf8mb4'
 };
