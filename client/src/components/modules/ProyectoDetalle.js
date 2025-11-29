@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { XMarkIcon, DocumentIcon } from '@heroicons/react/24/outline';
 import { localStorageAPI } from '../../services/localStorage';
 import { useProjectDetail } from '../../hooks/useProjectData';
@@ -7,6 +7,99 @@ import { PencilIcon, DocumentArrowUpIcon, FolderIcon, EyeIcon } from '@heroicons
 const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
   // IDs de categorías cuya celda "Contrato Prov. y Serv." debe estar bloqueada y pintada
   const BLOCKED_CONTRACT_CATEGORY_IDS = [1, 2, 3, 4, 5, 6, 7, 8];
+
+  // Función helper para identificar si una categoría debe tener color plomo en "Saldos por cancelar"
+  // Solo las primeras 8 filas específicas según la imagen
+  // 🔍 Función para identificar categorías que deben sumarse en el total de "Saldos por cancelar"
+  // Solo las celdas marcadas en rojo (NO las de fondo gris)
+  const shouldSumInTotalSaldos = (categoriaNombre) => {
+    if (!categoriaNombre) return false;
+    const nombre = categoriaNombre.toString().toLowerCase().trim();
+    
+    // Solo estas categorías específicas se suman en el total (las marcadas en rojo)
+    const categoriasParaSumar = [
+      'despecie',
+      'mano de obra',
+      'of - escp',
+      'of escp',
+      'granito y/o cuarzo',
+      'granito y/o cuarz',
+      'extras y/o eventos gyc',
+      'extras y/o eventos g y c',
+      'tercializacion 1 facturada',
+      'tercialización 1 facturada',
+      'extras y/o eventos terc. 1',
+      'extras y/o eventos tercializacion 1',
+      'tercializacion 2 facturada',
+      'tercialización 2 facturada',
+      'extras y/o eventos terc. 2',
+      'extras y/o eventos tercializacion 2',
+      'tercializacion 1 no facturada',
+      'tercialización 1 no facturada',
+      'extras y/o eventos terc. 1 nf',
+      'extras y/o eventos tercializacion 1 nf',
+      'tercializacion 2 no facturada',
+      'tercialización 2 no facturada',
+      'extras y/o eventos terc. 2 nf',
+      'extras y/o eventos tercializacion 2 nf'
+    ];
+    
+    // Verificar coincidencia exacta o parcial para "Mano de Obra" (puede tener variaciones)
+    if (nombre.includes('mano de obra')) {
+      return true;
+    }
+    
+    const esMarcada = categoriasParaSumar.some(cat => nombre === cat || nombre.includes(cat));
+    
+    // Debug: mostrar si una categoría está marcada
+    if (esMarcada) {
+      console.log(`✅ Categoría marcada detectada: "${categoriaNombre}" → será excluida de totales horizontales`);
+    }
+    
+    return esMarcada;
+  };
+
+  // 🔍 Función para identificar si una fila debe usar Presup. Del Proy. - Registro Egresos (marcadas en rojo)
+  // Solo las filas marcadas en rojo usan esta fórmula, las demás usan Contrato Prov. Y Serv. - Registro Egresos
+  const shouldUsePresupuestoFormula = (categoria) => {
+    if (!categoria) return false;
+    
+    // Verificar si tiene valor en Presup. Del Proy. (las celdas marcadas en rojo)
+    // Solo usar Presup. Del Proy. cuando tenga un valor mayor a 0
+    const presupuesto = parseMonetary(categoria.presupuestoDelProyecto || 0);
+    const tienePresupuesto = presupuesto > 0;
+    
+    // Si tiene Presup. Del Proy. con valor, usar esa fórmula (filas marcadas en rojo)
+    // Si no, usar Contrato Prov. Y Serv. (filas normales)
+    return tienePresupuesto;
+  };
+
+  const shouldHaveGrayBackground = (categoriaNombre) => {
+    if (!categoriaNombre) return false;
+    const nombre = categoriaNombre.toString().toLowerCase().trim();
+    
+    // Solo estas categorías específicas deben tener fondo plomo (las primeras 8 filas exactas)
+    // Usar coincidencias exactas o muy específicas para evitar falsos positivos
+    const categoriasPlomo = [
+      'melamina y servicios',
+      'melamina high gloss',
+      'accesorios y ferretería',
+      'accesorios y ferreteria',
+      'puertas alu vidrios',
+      'puertas alu y vidrios',
+      'led y electricidad',
+      'flete y/o camioneta',
+      'logística operativa',
+      'logistica operativa'
+    ];
+    
+    // Para "Extras y/o Eventos", solo si es exactamente esa categoría (no las variantes GyC, Terc., etc.)
+    if (nombre === 'extras y/o eventos' || nombre === 'extras y/o evento') {
+      return true;
+    }
+    
+    return categoriasPlomo.some(cat => nombre === cat);
+  };
 
   // Util: parsear valores monetarios (acepta string con símbolos o números)
   const parseMonetary = (v) => {
@@ -27,6 +120,12 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
 
   // 🎯 SISTEMA DE AUTO-SYNC CON EXCEL PRINCIPAL
   const { project, loading, updateField, updateCategory, addCategory, totales } = useProjectDetail(projectNumber);
+  
+  // Estados para rastrear qué celdas monetarias están siendo editadas
+  const [editingCells, setEditingCells] = useState({}); // { 'categoriaId-field': true }
+  const [editingValues, setEditingValues] = useState({}); // { 'categoriaId-field': 'raw value' }
+  const [editingMontoContrato, setEditingMontoContrato] = useState(false);
+  const [montoContratoRaw, setMontoContratoRaw] = useState('');
   
   // Popup de Cobranzas (acceso desde "Monto del Contrato" de la izquierda)
   const [cobranzasPopupOpen, setCobranzasPopupOpen] = useState(false);
@@ -59,71 +158,102 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
   const cobranzasPopupRef = useRef(null);
   const handlePrintCobranzas = () => {
     const node = cobranzasPopupRef.current;
-    if (!node) return;
+    if (!node) {
+      alert('Error: No se encontró el contenido para generar el PDF.');
+      return;
+    }
 
-    // Crear un contenedor espejo solo para impresión, dentro del mismo documento
-    const mirrorId = 'cobranzas-print-root';
-    const styleId = 'cobranzas-print-style';
-
-    // Limpiar restos anteriores
-    const prevMirror = document.getElementById(mirrorId);
-    if (prevMirror) prevMirror.remove();
-    const prevStyle = document.getElementById(styleId);
-    if (prevStyle) prevStyle.remove();
-
-    // Clonar el contenido del popup (sin mover el original)
-    const mirror = document.createElement('div');
-    mirror.id = mirrorId;
-    mirror.setAttribute('style', 'display:none;');
-    // Usamos innerHTML para mantener el marcado con clases de Tailwind
-    mirror.innerHTML = node.innerHTML;
-    document.body.appendChild(mirror);
-
-    // Estilos de impresión: ocultar todo excepto el mirror y normalizar su layout
-    const style = document.createElement('style');
-    style.id = styleId;
-    style.type = 'text/css';
-    style.innerHTML = `
-      @media print {
-        body.printing-cobranzas * { display: none !important; visibility: hidden !important; }
-        body.printing-cobranzas #${mirrorId},
-        body.printing-cobranzas #${mirrorId} * {
-          display: revert !important;
-          visibility: visible !important;
+    // Cargar html2pdf.js desde CDN si no está disponible
+    const loadHtml2Pdf = () => {
+      return new Promise((resolve, reject) => {
+        if (window.html2pdf) {
+          resolve(window.html2pdf);
+          return;
         }
-        body.printing-cobranzas #${mirrorId} {
-          display: block !important;
-          position: static !important;
-          transform: none !important;
-          inset: auto !important;
-          box-shadow: none !important;
-          width: 100% !important;
-          max-width: 100% !important;
-          max-height: none !important;
-          overflow: visible !important;
-          background: #ffffff !important;
-          border: none !important;
-          padding: 0 !important;
-          margin: 0 !important;
-        }
-        @page { size: A4; margin: 12mm; }
-      }
-    `;
-    document.head.appendChild(style);
-    document.body.classList.add('printing-cobranzas');
-
-    const cleanup = () => {
-      document.body.classList.remove('printing-cobranzas');
-      const m = document.getElementById(mirrorId);
-      if (m) m.remove();
-      const st = document.getElementById(styleId);
-      if (st) st.remove();
-      window.removeEventListener('afterprint', cleanup);
+        
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+        script.onload = () => resolve(window.html2pdf);
+        script.onerror = reject;
+        document.head.appendChild(script);
+      });
     };
-    window.addEventListener('afterprint', cleanup);
 
-    // Imprimir
-    setTimeout(() => window.print(), 50);
+    loadHtml2Pdf().then((html2pdf) => {
+      // Clonar el contenido del popup para evitar problemas con elementos fixed
+      const clone = node.cloneNode(true);
+      
+      // Ocultar botones en el clon
+      const cloneButtons = clone.querySelectorAll('button');
+      cloneButtons.forEach((btn) => {
+        const btnText = btn.textContent || '';
+        const hasSvg = btn.querySelector('svg');
+        if (btnText.includes('Generar PDF') || btnText.includes('Cerrar') || hasSvg) {
+          btn.style.display = 'none';
+        }
+      });
+
+      // Crear un contenedor temporal visible para html2canvas
+      const printContainer = document.createElement('div');
+      printContainer.style.position = 'absolute';
+      printContainer.style.left = '-9999px';
+      printContainer.style.top = '0';
+      printContainer.style.width = '760px';
+      printContainer.style.backgroundColor = '#ffffff';
+      printContainer.style.padding = '20px';
+      
+      // Aplicar estilos al clon para que se vea correctamente
+      clone.style.position = 'relative';
+      clone.style.transform = 'none';
+      clone.style.top = 'auto';
+      clone.style.left = 'auto';
+      clone.style.margin = '0';
+      clone.style.width = '100%';
+      clone.style.maxWidth = 'none';
+      clone.style.maxHeight = 'none';
+      clone.style.overflow = 'visible';
+      
+      printContainer.appendChild(clone);
+      document.body.appendChild(printContainer);
+
+      // Esperar un momento para que se renderice
+      setTimeout(() => {
+        const opt = {
+          margin: [10, 10, 10, 10],
+          filename: `Cobranzas_Proyecto_${projectData.nombreProyecto || 'Proyecto'}_${new Date().toISOString().split('T')[0]}.pdf`,
+          image: { type: 'jpeg', quality: 0.98 },
+          html2canvas: { 
+            scale: 2, 
+            useCORS: true,
+            logging: true,
+            backgroundColor: '#ffffff',
+            allowTaint: false,
+            scrollX: 0,
+            scrollY: 0,
+            windowWidth: 760,
+            windowHeight: clone.scrollHeight
+          },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+          pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+        };
+
+        html2pdf().set(opt).from(printContainer).save().then(() => {
+          // Limpiar el contenedor temporal
+          document.body.removeChild(printContainer);
+          console.log('✅ PDF generado exitosamente');
+        }).catch((error) => {
+          console.error('❌ Error al generar PDF:', error);
+          alert('Error al generar el PDF: ' + error.message);
+          // Limpiar el contenedor temporal en caso de error
+          if (document.body.contains(printContainer)) {
+            document.body.removeChild(printContainer);
+          }
+        });
+      }, 500);
+    }).catch((error) => {
+      console.error('❌ Error al cargar html2pdf.js:', error);
+      alert('Error al cargar la librería de PDF. Por favor, intenta nuevamente.');
+    });
   };
 
   // Popup por-celda para "Contrato Prov. y Serv." (categoría)
@@ -168,14 +298,14 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       fecha: a.fecha || '',
       monto: parseMonetary(a.monto)
     }));
-    const totalAbonos = abonosSanitized.reduce((s, a) => s + (a.monto || 0), 0);
-    const saldo = Math.max(monto - totalAbonos, 0);
+    // NO calcular saldosPorCancelar aquí - se calcula automáticamente en el useEffect
+    // Fórmula automática: Saldos por Cancelar = Contrato Prov. Y Serv. - Registro Egresos
     updateCategory(contratoPopupOpenFor, {
       proveedorServicio: contratoForm.proveedor,
       descripcionServicio: contratoForm.descripcion,
       contratoProvedYServ: monto,
-      abonosContrato: abonosSanitized,
-      saldosPorCancelar: saldo
+      abonosContrato: abonosSanitized
+      // saldosPorCancelar se calculará automáticamente en el useEffect
     });
     setContratoPopupOpenFor(null);
   };
@@ -340,6 +470,109 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     return `S/${Number.isFinite(num) ? moneyFormatter.format(num) : '0.00'}`;
   };
 
+  // Helper para extraer solo números y decimales de un string (permite edición libre con puntos y comas)
+  const extractNumericValue = (str) => {
+    if (!str || str === '') return '';
+    // Permite números, punto, coma y signo negativo al inicio
+    let cleaned = str.toString().replace(/[^0-9.,-]/g, '');
+    
+    // Detectar si hay coma o punto
+    const hasComa = cleaned.includes(',');
+    const hasPunto = cleaned.includes('.');
+    
+    if (hasComa && hasPunto) {
+      // Si tiene ambos, determinar cuál es el separador decimal basado en la posición
+      const lastComa = cleaned.lastIndexOf(',');
+      const lastPunto = cleaned.lastIndexOf('.');
+      
+      if (lastPunto > lastComa) {
+        // Formato: 20,000.00 (coma para miles, punto para decimales) - FORMATO ESTÁNDAR
+        // Quitar todas las comas (son separadores de miles)
+        cleaned = cleaned.replace(/,/g, '');
+      } else {
+        // Formato: 20.000,00 (punto para miles, coma para decimales) - FORMATO EUROPEO
+        // Quitar todos los puntos (son separadores de miles) y convertir coma a punto
+        cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+      }
+    } else if (hasComa) {
+      // Solo tiene coma
+      const comas = cleaned.split(',');
+      if (comas.length === 2 && comas[1].length <= 3) {
+        // Probablemente es formato: 20000,50 (coma como decimal)
+        cleaned = comas[0] + '.' + comas[1];
+      } else if (comas.length > 1) {
+        // Múltiples comas: todas menos la última son miles, la última puede ser decimal
+        const lastPart = comas[comas.length - 1];
+        if (lastPart.length <= 3) {
+          // La última parte es decimal
+          cleaned = comas.slice(0, -1).join('') + '.' + lastPart;
+        } else {
+          // Todas son miles
+          cleaned = comas.join('');
+        }
+      } else {
+        // Solo una coma, si el número es grande probablemente es miles, si es pequeño puede ser decimal
+        const numPart = comas[0];
+        if (numPart.length > 3) {
+          // Probablemente es miles, quitar la coma
+          cleaned = numPart;
+        } else {
+          // Probablemente es decimal
+          cleaned = cleaned.replace(',', '.');
+        }
+      }
+    } else if (hasPunto) {
+      // Solo tiene punto
+      const puntos = cleaned.split('.');
+      if (puntos.length > 2) {
+        // Múltiples puntos: todos menos el último son miles
+        cleaned = puntos.slice(0, -1).join('') + '.' + puntos[puntos.length - 1];
+      }
+      // Si tiene un solo punto, dejarlo como está (probablemente decimal)
+    }
+    
+    // Asegurar que solo hay un punto decimal
+    const parts = cleaned.split('.');
+    if (parts.length > 2) {
+      cleaned = parts[0] + '.' + parts.slice(1).join('');
+    }
+    
+    return cleaned;
+  };
+
+  // Helper para formatear un número con separadores de miles y decimales automáticamente
+  const formatWithDecimals = (value) => {
+    const num = parseFloat(extractNumericValue(value)) || 0;
+    // Formatear con separadores de miles y 2 decimales
+    return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  // Helper para formatear un número para mostrar (con separadores de miles y decimales)
+  const formatMonetaryDisplay = (value) => {
+    const num = parseMonetary(value);
+    if (num === 0 || !Number.isFinite(num)) return '';
+    // Formatear con separadores de miles y 2 decimales
+    return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  // Helper para obtener el valor display de una celda monetaria (sin formato forzado)
+  const getMonetaryDisplayValue = (value, isEditing = false) => {
+    if (isEditing) {
+      // Mientras edita, mostrar solo el número sin formato
+      const num = extractNumericValue(value);
+      return num === '' ? '' : num;
+    }
+    // Cuando no está editando, mostrar formato solo si hay valor
+    const num = parseMonetary(value);
+    if (num === 0 || !Number.isFinite(num)) return '';
+    // Permitir mostrar con o sin decimales según lo que el usuario escribió
+    const str = value?.toString() || '';
+    if (str.includes('.')) {
+      return `S/${num.toFixed(2)}`;
+    }
+    return `S/${Math.round(num)}`;
+  };
+
   // Sincronizar estado local con cambios del servicio (project)
   useEffect(() => {
     if (!project) return;
@@ -432,17 +665,94 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
   };
 
   // 🔄 AUTO-SAVE: Handler para categorías (nuevo sistema)
+  // Handler para cuando una celda monetaria gana el foco
+  const handleMonetaryCellFocus = (categoriaId, field, currentValue) => {
+    const cellKey = `${categoriaId}-${field}`;
+    setEditingCells(prev => ({ ...prev, [cellKey]: true }));
+    // Inicializar el valor raw con el número sin separadores de miles pero con decimales
+    const num = parseMonetary(currentValue);
+    // Mostrar sin separadores de miles para facilitar la edición
+    setEditingValues(prev => ({ ...prev, [cellKey]: num === 0 ? '' : num.toFixed(2).replace(/,/g, '') }));
+  };
+
+  // Handler para cuando una celda monetaria pierde el foco
+  const handleMonetaryCellBlur = (categoriaId, field) => {
+    const cellKey = `${categoriaId}-${field}`;
+    setEditingCells(prev => {
+      const newState = { ...prev };
+      delete newState[cellKey];
+      return newState;
+    });
+    // Guardar el valor final: primero extraer el número correctamente, luego guardar
+    const rawValue = editingValues[cellKey] || '';
+    // Extraer el número correctamente (maneja comas como separadores de miles)
+    const numericString = extractNumericValue(rawValue);
+    const finalValue = parseFloat(numericString) || 0;
+    
+    // Actualizar el campo modificado
+    if (updateCategory) {
+      updateCategory(categoriaId, { [field]: finalValue });
+    }
+    
+    // Actualizar estado local
+    const updatedCategorias = projectData.categorias.map(cat => {
+      if (cat.id === categoriaId) {
+        const updatedCat = { ...cat, [field]: finalValue };
+        
+        // Si se actualizó presupuestoDelProyecto o registroEgresos, calcular saldosPorCancelar automáticamente
+        // Solo calcular si hay un valor en "Registro Egresos"
+        if (field === 'presupuestoDelProyecto' || field === 'registroEgresos') {
+          const presupuesto = field === 'presupuestoDelProyecto' ? finalValue : parseMonetary(cat.presupuestoDelProyecto);
+          const egresos = field === 'registroEgresos' ? finalValue : parseMonetary(cat.registroEgresos);
+          
+          // Solo calcular si hay egresos (mayor que 0)
+          let saldosCalculados = 0;
+          if (egresos && egresos > 0) {
+            saldosCalculados = presupuesto - egresos;
+          }
+          
+          updatedCat.saldosPorCancelar = saldosCalculados;
+          
+          // Actualizar también en el servicio
+          if (updateCategory) {
+            updateCategory(categoriaId, { saldosPorCancelar: saldosCalculados });
+          }
+        }
+        
+        return updatedCat;
+      }
+      return cat;
+    });
+    
+    setProjectData(prev => ({
+      ...prev,
+      categorias: updatedCategorias
+    }));
+    
+    // Limpiar el valor raw
+    setEditingValues(prev => {
+      const newState = { ...prev };
+      delete newState[cellKey];
+      return newState;
+    });
+  };
+
   const handleCategoriaChange = (categoriaId, field, value) => {
+    const monetaryKeys = ['presupuestoDelProyecto', 'contratoProvedYServ', 'registroEgresos', 'saldosPorCancelar'];
+    const isMonetary = monetaryKeys.includes(field);
+    
+    // Guardar valor raw mientras se edita (permitir puntos y comas)
+    if (isMonetary) {
+      const cellKey = `${categoriaId}-${field}`;
+      // Guardar el valor tal como lo escribe el usuario (con puntos y comas)
+      // Solo limpiar caracteres no numéricos excepto punto y coma
+      const cleanedValue = value.toString().replace(/[^0-9.,-]/g, '');
+      setEditingValues(prev => ({ ...prev, [cellKey]: cleanedValue }));
+    } else {
     // Sistema de auto-sync: cualquier cambio se guarda automáticamente
     if (updateCategory) {
-      // Sanitizar valores monetarios antes de enviarlos al servicio
-      const monetaryKeys = ['presupuestoDelProyecto', 'contratoProvedYServ', 'registroEgresos', 'saldosPorCancelar'];
-      const processed = monetaryKeys.includes(field)
-        ? (parseFloat(String(value).replace(/[^0-9.-]/g, '')) || 0)
-        : value;
-      updateCategory(categoriaId, { [field]: processed });
-    }
-
+        updateCategory(categoriaId, { [field]: value });
+      }
     // Mantener compatibilidad con estado local
     setProjectData(prev => ({
       ...prev,
@@ -450,21 +760,11 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
         cat.id === categoriaId ? { ...cat, [field]: value } : cat
       )
     }));
-
-    // Persistencia redundante: guardar categoría actualizada en localStores
-    try {
-      const monetaryKeys = ['presupuestoDelProyecto', 'contratoProvedYServ', 'registroEgresos', 'saldosPorCancelar'];
-      const processed = monetaryKeys.includes(field) ? (parseFloat(String(value).replace(/[^0-9.-]/g, '')) || 0) : value;
-      // Guardar solo la categoría modificada en el project store
-      const key = `categoria_${categoriaId}`;
-      saveProjectToLocalStores(projectNumber, { categorias: { [categoriaId]: { [field]: processed } } });
-    } catch (e) {
-      /* ignore */
     }
   };
 
-  // 🧮 FUNCIÓN DE TOTALES AUTOMÁTICOS (como Excel)
-  const calcularTotales = () => {
+  // 🧮 FUNCIÓN DE TOTALES PARA LA TABLA (suma vertical - incluye TODAS las filas)
+  const calcularTotalesTabla = () => {
     if (!projectData.categorias || projectData.categorias.length === 0) {
       return {
         presupuesto: 0,
@@ -481,24 +781,99 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       } catch (e) { return 0; }
     };
 
+    // Para la tabla: sumar TODAS las filas verticalmente (incluyendo las marcadas en rojo)
     return projectData.categorias.reduce((totales, categoria) => {
       const presupuesto = sanitize(categoria.presupuestoDelProyecto);
       const contrato = sanitize(categoria.contratoProvedYServ);
       const egresos = sanitize(categoria.registroEgresos);
-      const saldos = sanitize(categoria.saldosPorCancelar);
+      
+      // Para saldos: solo sumar las categorías específicas marcadas
+      let saldos = 0;
+      if (shouldSumInTotalSaldos(categoria.nombre)) {
+        saldos = sanitize(categoria.saldosPorCancelar);
+      }
 
       return {
         presupuesto: totales.presupuesto + presupuesto,
-        contrato: totales.contrato + contrato,
-        egresos: totales.egresos + egresos,
+        contrato: totales.contrato + contrato, // Sumar TODOS los contratos
+        egresos: totales.egresos + egresos, // Sumar TODOS los egresos
         saldos: totales.saldos + saldos
       };
     }, { presupuesto: 0, contrato: 0, egresos: 0, saldos: 0 });
   };
 
+  // 🧮 FUNCIÓN DE TOTALES PARA COLUMNAS DE LA DERECHA (excluye filas marcadas en rojo)
+  const calcularTotalesHorizontales = () => {
+    if (!projectData.categorias || projectData.categorias.length === 0) {
+      return {
+        presupuesto: 0,
+        contrato: 0,
+        egresos: 0
+      };
+    }
+    const sanitize = (v) => {
+      if (v === undefined || v === null) return 0;
+      try {
+        const s = String(v).replace(/[^0-9.-]/g, '');
+        return parseFloat(s) || 0;
+      } catch (e) { return 0; }
+    };
+
+    // Para columnas de la derecha: EXCLUIR filas marcadas en rojo
+    return projectData.categorias.reduce((totales, categoria) => {
+      const presupuesto = sanitize(categoria.presupuestoDelProyecto);
+      const contrato = sanitize(categoria.contratoProvedYServ);
+      const egresos = sanitize(categoria.registroEgresos);
+      
+      // 🔴 EXCLUIR SOLO LAS FILAS MARCADAS EN ROJO de los cálculos horizontales
+      // Solo las filas identificadas por shouldSumInTotalSaldos (marcadas en el cuadro rojo)
+      // Las otras filas con presupuesto > 0 deben sumarse normalmente
+      const esFilaMarcada = shouldSumInTotalSaldos(categoria.nombre);
+      const debeExcluirse = esFilaMarcada; // Solo excluir las filas marcadas específicamente
+
+      // Debug: mostrar qué filas se están excluyendo
+      if (debeExcluirse && (contrato > 0 || egresos > 0)) {
+        console.log(`🔴 EXCLUYENDO fila "${categoria.nombre}": Contrato=${contrato}, Egresos=${egresos}, Presupuesto=${presupuesto}, EsMarcada=${esFilaMarcada}`);
+      }
+
+      return {
+        // Solo sumar Presupuesto, Contrato y Egresos si NO está marcada en rojo
+        presupuesto: totales.presupuesto + (debeExcluirse ? 0 : presupuesto),
+        contrato: totales.contrato + (debeExcluirse ? 0 : contrato),
+        egresos: totales.egresos + (debeExcluirse ? 0 : egresos)
+      };
+    }, { presupuesto: 0, contrato: 0, egresos: 0 });
+  };
+
+  // 🧮 FUNCIÓN PARA CALCULAR TOTAL SALDO POR PAGAR PROVEEDORES
+  // Suma los "Saldos por cancelar" SOLO de las filas marcadas en rojo
+  const calcularTotalSaldoPorPagarProveedores = () => {
+    if (!projectData.categorias || projectData.categorias.length === 0) {
+      return 0;
+    }
+    const sanitize = (v) => {
+      if (v === undefined || v === null) return 0;
+      try {
+        const s = String(v).replace(/[^0-9.-]/g, '');
+        return parseFloat(s) || 0;
+      } catch (e) { return 0; }
+    };
+
+    return projectData.categorias.reduce((sum, categoria) => {
+      if (shouldSumInTotalSaldos(categoria.nombre)) {
+        return sum + sanitize(categoria.saldosPorCancelar);
+      }
+      return sum;
+    }, 0);
+  };
+
+  // Función de compatibilidad (usa totales de tabla para mantener compatibilidad)
+  const calcularTotales = calcularTotalesTabla;
+
   // 🧮 FÓRMULAS AUTOMÁTICAS DEL ANÁLISIS FINANCIERO
   const calcularAnalisisFinanciero = () => {
-    const totales = calcularTotales();
+    // Usar totales horizontales (excluye filas marcadas) para los cálculos de la derecha
+    const totales = calcularTotalesHorizontales();
     const montoContrato = parseMonetary(projectData.montoContrato);
     const presupuestoProyecto = parseMonetary(projectData.presupuestoDelProyecto);
     
@@ -522,26 +897,70 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
   };
 
   // 💰 FUNCIONES PARA COBRANZAS
-  const handleCobranzaChange = (index, field, value) => {
+  // 🎯 HANDLERS PARA COBRANZAS - FORMATO MONETARIO CON DECIMALES
+  const handleCobranzaMontoFocus = (index, currentValue) => {
+    const cellKey = `cobranza-${index}-monto`;
+    // Mostrar valor raw sin formato para edición fácil
+    const rawValue = parseMonetary(currentValue);
+    setEditingCells(prev => ({ ...prev, [cellKey]: true }));
+    setEditingValues(prev => ({ ...prev, [cellKey]: rawValue === 0 ? '' : rawValue.toString() }));
+  };
+
+  const handleCobranzaMontoBlur = (index) => {
+    const cellKey = `cobranza-${index}-monto`;
+    setEditingCells(prev => {
+      const newState = { ...prev };
+      delete newState[cellKey];
+      return newState;
+    });
+    
+    // Guardar el valor final: primero extraer el número correctamente, luego guardar
+    const rawValue = editingValues[cellKey] || '';
+    const numericString = extractNumericValue(rawValue);
+    const finalValue = parseFloat(numericString) || 0;
+    
+    // Actualizar el estado
     setProjectData(prev => {
       const newCobranzas = [...prev.cobranzas];
-      if (field === 'monto') {
-        // Convertir a número y validar
-        const numericValue = parseFloat(value.toString().replace(/[^0-9.-]/g, '')) || 0;
-        newCobranzas[index] = { ...newCobranzas[index], [field]: numericValue };
-      } else {
-        newCobranzas[index] = { ...newCobranzas[index], [field]: value };
-      }
-      
-      const updated = { ...prev, cobranzas: newCobranzas };
+      newCobranzas[index] = { ...newCobranzas[index], monto: finalValue };
       
       // 🔄 AUTO-SAVE: Guardar en el servicio
       if (updateField) {
         updateField('cobranzas', newCobranzas);
       }
       
-      return updated;
+      return { ...prev, cobranzas: newCobranzas };
     });
+    
+    // Limpiar el valor raw
+    setEditingValues(prev => {
+      const newState = { ...prev };
+      delete newState[cellKey];
+      return newState;
+    });
+  };
+
+  const handleCobranzaChange = (index, field, value) => {
+      if (field === 'monto') {
+      // Guardar valor raw mientras se edita (permitir puntos y comas)
+      const cellKey = `cobranza-${index}-monto`;
+      // Guardar el valor tal como lo escribe el usuario (con puntos y comas)
+      const cleanedValue = value.toString().replace(/[^0-9.,-]/g, '');
+      setEditingValues(prev => ({ ...prev, [cellKey]: cleanedValue }));
+      } else {
+      // Para otros campos (fecha), guardar directamente
+      setProjectData(prev => {
+        const newCobranzas = [...prev.cobranzas];
+        newCobranzas[index] = { ...newCobranzas[index], [field]: value };
+      
+      // 🔄 AUTO-SAVE: Guardar en el servicio
+      if (updateField) {
+        updateField('cobranzas', newCobranzas);
+      }
+      
+        return { ...prev, cobranzas: newCobranzas };
+    });
+    }
   };
 
   // 🧮 CALCULAR TOTAL DE COBRANZAS
@@ -595,7 +1014,24 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
 
   // 💰 MANEJAR CAMBIO EN MONTO DEL CONTRATO
   const handleMontoContratoChange = (value) => {
-    const numericValue = parseFloat(value.toString().replace(/[^0-9.-]/g, '')) || 0;
+    // Guardar valor raw mientras se edita (permitir puntos y comas)
+    // Solo limpiar caracteres no numéricos excepto punto y coma
+    const cleanedValue = value.toString().replace(/[^0-9.,-]/g, '');
+    setMontoContratoRaw(cleanedValue);
+  };
+
+  const handleMontoContratoFocus = () => {
+    setEditingMontoContrato(true);
+    const num = parseMonetary(projectData.montoContrato);
+    // Mostrar sin separadores de miles para facilitar la edición
+    setMontoContratoRaw(num === 0 ? '' : num.toFixed(2).replace(/,/g, ''));
+  };
+
+  const handleMontoContratoBlur = () => {
+    setEditingMontoContrato(false);
+    // Extraer el número correctamente (maneja comas como separadores de miles)
+    const numericString = extractNumericValue(montoContratoRaw);
+    const numericValue = parseFloat(numericString) || 0;
     // Calcular equivalentes: con factura (sin IGV) y sin factura
     const estimadoSinFactura = numericValue;
     const estimadoConFactura = numericValue > 0 ? (numericValue / 1.18) : 0;
@@ -628,11 +1064,14 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
         // ignore save error for optional field
       }
     }
+    setMontoContratoRaw('');
   };
 
   // 💰 MANEJAR CAMBIO EN ADELANTOS
   const handleAdelantosChange = (value) => {
-    const numericValue = parseFloat(value.toString().replace(/[^0-9.-]/g, '')) || 0;
+    // Extraer el número correctamente (maneja comas como separadores de miles)
+    const numericString = extractNumericValue(value);
+    const numericValue = parseFloat(numericString) || 0;
     setProjectData(prev => ({ ...prev, adelantos: numericValue }));
     
     // 🔄 AUTO-SAVE
@@ -643,7 +1082,9 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
 
   // 📊 MANEJAR CAMBIO EN UTILIDAD ESTIMADA SIN FACTURA
   const handleUtilidadEstimadaSFChange = (value) => {
-    const numericValue = parseFloat(value.toString().replace(/[^0-9.-]/g, '')) || 0;
+    // Extraer el número correctamente (maneja comas como separadores de miles)
+    const numericString = extractNumericValue(value);
+    const numericValue = parseFloat(numericString) || 0;
     setProjectData(prev => ({ ...prev, utilidadEstimadaSinFactura: numericValue }));
     
     // 🔄 AUTO-SAVE
@@ -654,7 +1095,9 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
 
   // 📊 MANEJAR CAMBIO EN UTILIDAD ESTIMADA CON FACTURA
   const handleUtilidadEstimadaCFChange = (value) => {
-    const numericValue = parseFloat(value.toString().replace(/[^0-9.-]/g, '')) || 0;
+    // Extraer el número correctamente (maneja comas como separadores de miles)
+    const numericString = extractNumericValue(value);
+    const numericValue = parseFloat(numericString) || 0;
     setProjectData(prev => ({ ...prev, utilidadEstimadaConFactura: numericValue }));
     
     // 🔄 AUTO-SAVE
@@ -664,24 +1107,25 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
   };
 
   // 📊 OBTENER TOTALES CALCULADOS
-  const totalesCalculados = calcularTotales();
+  // Totales para la tabla (suma vertical - incluye todas las filas)
+  const totalesCalculados = calcularTotalesTabla();
+  // Totales para columnas de la derecha (excluye filas marcadas en rojo)
+  const totalesHorizontales = calcularTotalesHorizontales();
   const analisisCalculado = calcularAnalisisFinanciero();
 
   // 🔄 AUTO-SYNC: Actualizar campos calculados cuando cambien las categorías
   useEffect(() => {
     if (projectData.categorias && updateField) {
-      // 🧮 CALCULAR TOTALES AUTOMÁTICAMENTE
-      const totalesCategoria = projectData.categorias.reduce((acc, cat) => {
-        const presupuesto = parseFloat(cat.presupuestoDelProyecto?.toString().replace(/[^0-9.-]/g, '')) || 0;
-        const contrato = parseFloat(cat.contratoProvedYServ?.toString().replace(/[^0-9.-]/g, '')) || 0;
-        const egresos = parseFloat(cat.registroEgresos?.toString().replace(/[^0-9.-]/g, '')) || 0;
-        
-        return {
-          totalPresupuesto: acc.totalPresupuesto + presupuesto,
-          totalContrato: acc.totalContrato + contrato,
-          totalEgresos: acc.totalEgresos + egresos
-        };
-      }, { totalPresupuesto: 0, totalContrato: 0, totalEgresos: 0 });
+      // 🧮 CALCULAR TOTALES AUTOMÁTICAMENTE PARA COLUMNAS DE LA DERECHA
+      // Usar la función que excluye las filas marcadas en rojo
+      const totalesCategoria = calcularTotalesHorizontales();
+      
+      // Debug: mostrar los totales calculados
+      console.log('📊 TOTALES HORIZONTALES (excluyendo filas marcadas):', {
+        totalContrato: totalesCategoria.totalContrato,
+        totalEgresos: totalesCategoria.totalEgresos,
+        totalPresupuesto: totalesCategoria.totalPresupuesto
+      });
 
       // 🧮 CALCULAR CAMPOS FINANCIEROS
     const montoContrato = parseMonetary(projectData.montoContrato);
@@ -691,11 +1135,88 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
 
       // 🔄 ACTUALIZAR TODOS LOS CAMPOS CALCULADOS EN EL SERVICIO
       
+      // 📊 ACTUALIZAR SALDOS POR CANCELAR PARA FILAS ESPECÍFICAS
+      // 1. Filas marcadas en rojo (shouldSumInTotalSaldos): SIEMPRE usar Contrato Prov. Y Serv. - Registro Egresos (NO usar Presup. Del Proy.)
+      // 2. Filas NO marcadas con Presup. Del Proy. > 0: Saldos por Cancelar = Presup. Del Proy. - Registro Egresos
+      // Las demás filas mantienen su valor sin calcularse automáticamente
+      // Esta fórmula NO debe ser afectada por las celdas de IGV (Impuesto Estimado, Crédito Fiscal Real, etc.)
+      if (projectData.categorias && projectData.categorias.length > 0) {
+        const categoriasActualizadas = projectData.categorias.map(cat => {
+          // Verificar si está marcada en rojo (estas SIEMPRE usan Contrato, nunca Presupuesto)
+          const esFilaMarcada = shouldSumInTotalSaldos(cat.nombre);
+          
+          // Verificar si debe usar Presup. Del Proy. (solo si NO está marcada en rojo)
+          const usarPresupuesto = !esFilaMarcada && shouldUsePresupuestoFormula(cat);
+          
+          if (esFilaMarcada) {
+            // Para filas marcadas en rojo: SIEMPRE usar Contrato Prov. Y Serv. - Registro Egresos (ignorar Presup. Del Proy.)
+            const contrato = parseMonetary(cat.contratoProvedYServ || 0);
+            const egresos = parseMonetary(cat.registroEgresos || 0);
+            const saldosPorCancelar = contrato - egresos;
+            
+            return {
+              ...cat,
+              saldosPorCancelar: saldosPorCancelar
+            };
+          } else if (usarPresupuesto) {
+            // Para filas NO marcadas con Presup. Del Proy. > 0: Presup. Del Proy. - Registro Egresos
+            const presupuesto = parseMonetary(cat.presupuestoDelProyecto || 0);
+            const egresos = parseMonetary(cat.registroEgresos || 0);
+            const saldosPorCancelar = presupuesto - egresos;
+            
+            return {
+              ...cat,
+              saldosPorCancelar: saldosPorCancelar
+            };
+          } else {
+            // Para las demás filas: mantener el valor actual sin calcular automáticamente
+            return {
+              ...cat
+              // No modificar saldosPorCancelar - mantener valor existente
+            };
+          }
+        });
+        
+        // Actualizar en el estado local
+        setProjectData(prev => ({
+          ...prev,
+          categorias: categoriasActualizadas
+        }));
+        
+        // Actualizar en el servicio (solo las filas que se calculan automáticamente)
+        if (updateCategory) {
+          categoriasActualizadas.forEach(cat => {
+            const esFilaMarcada = shouldSumInTotalSaldos(cat.nombre);
+            const usarPresupuesto = !esFilaMarcada && shouldUsePresupuestoFormula(cat);
+            
+            if (esFilaMarcada || usarPresupuesto) {
+              const originalCat = projectData.categorias.find(c => c.id === cat.id);
+              if (originalCat) {
+                const originalSaldos = parseMonetary(originalCat.saldosPorCancelar || 0);
+                const nuevosSaldos = parseMonetary(cat.saldosPorCancelar || 0);
+                // Solo actualizar si cambió el valor
+                if (Math.abs(originalSaldos - nuevosSaldos) > 0.01) {
+                  updateCategory(cat.id, { saldosPorCancelar: nuevosSaldos });
+                }
+              }
+            }
+          });
+        }
+      }
+      
       // 📊 CAMPOS BÁSICOS DE TOTALES
-      updateField('totalContratoProveedores', totalesCategoria.totalContrato);
-      updateField('totalSaldoPorPagarProveedores', totalesCategoria.totalEgresos);
-      updateField('presupuestoProyecto', totalesCategoria.totalPresupuesto);
-      updateField('totalEgresosProyecto', totalesCategoria.totalEgresos);
+      // Formatear valores con separadores de miles y dos decimales
+      // IMPORTANTE: Usar totalesCategoria que EXCLUYE filas marcadas en rojo
+      console.log('📊 COMPONENTE: Actualizando totales horizontales (excluyendo filas marcadas):', {
+        totalContrato: totalesCategoria.totalContrato,
+        totalEgresos: totalesCategoria.totalEgresos,
+        totalPresupuesto: totalesCategoria.totalPresupuesto
+      });
+      
+      updateField('totalContratoProveedores', formatMoney(totalesCategoria.totalContrato));
+      updateField('totalSaldoPorPagarProveedores', formatMoney(totalesCategoria.totalEgresos));
+      updateField('presupuestoProyecto', formatMoney(totalesCategoria.totalPresupuesto));
+      updateField('totalEgresosProyecto', formatMoney(totalesCategoria.totalEgresos));
       
       // 🧮 ANÁLISIS FINANCIERO SIN FACTURA
       const utilidadRealSF = utilidadEstimadaSF - totalesCategoria.totalEgresos;
@@ -708,9 +1229,25 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       updateField('balanceUtilidadConFactura', utilidadRealCF);
       
       // 💰 COBRANZAS Y SALDOS
+      // Usar totales horizontales (excluye filas marcadas) para los balances
       updateField('saldoXCobrar', montoContrato - adelantos);
       updateField('balanceDeComprasDelProyecto', totalesCategoria.totalPresupuesto - totalesCategoria.totalEgresos);
       updateField('balanceDelPresupuesto', totalesCategoria.totalPresupuesto - montoContrato);
+      
+      // Actualizar también en projectData local para mostrar inmediatamente
+      setProjectData(prev => ({
+        ...prev,
+        totalContratoProveedores: formatMoney(totalesCategoria.totalContrato),
+        totalSaldoPorPagarProveedores: formatMoney(totalesCategoria.totalEgresos),
+        presupuestoProyecto: formatMoney(totalesCategoria.totalPresupuesto),
+        totalEgresosProyecto: formatMoney(totalesCategoria.totalEgresos),
+        balanceDeComprasDelProyecto: formatMoney(totalesCategoria.totalPresupuesto - totalesCategoria.totalEgresos),
+        balanceDelPresupuesto: formatMoney(totalesCategoria.totalPresupuesto - montoContrato),
+        utilidadRealSinFactura: formatMoney(utilidadRealSF),
+        balanceUtilidadSinFactura: formatMoney(utilidadRealSF),
+        utilidadRealConFactura: formatMoney(utilidadRealCF),
+        balanceUtilidadConFactura: formatMoney(utilidadRealCF)
+      }));
       
       // 🧾 IGV - SUNAT 18% (calculados automáticamente)
       const igvRate = 0.18;
@@ -733,6 +1270,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
         'tercializacion 2 facturada',
         'tercialización 2 facturada'
       ]);
+      // 🧾 Crédito Fiscal Estimado = Suma de PRESUPUESTOS con F × 0.18 / 1.18
       const baseCredito = (projectData.categorias || []).reduce((sum, cat) => {
         const nombre = (cat?.nombre || '').toString().toLowerCase().trim();
         const esTipoF = (cat?.tipo || '').toString().toUpperCase() === 'F';
@@ -743,8 +1281,31 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
         return califica ? sum + valor : sum;
       }, 0);
       const creditoFiscalEstimado = (baseCredito / 1.18) * igvRate;
-      const impuestoEstimado = montoContrato * igvRate;
-      const creditoFiscalReal = utilidadRealSF * igvRate;
+      
+      // 🧾 Crédito Fiscal Real = Suma de CONTRATOS con F × 0.18 / 1.18
+      const totalContratosConFactura = (projectData.categorias || []).reduce((sum, cat) => {
+        const esTipoF = (cat?.tipo || '').toString().toUpperCase() === 'F';
+        if (esTipoF) {
+          // Usar parseMonetary para manejar diferentes formatos (número, string con S/, etc.)
+          const monto = parseMonetary(cat.contratoProvedYServ || 0);
+          console.log(`   📌 Categoría con F: "${cat.nombre}" - Contrato: ${cat.contratoProvedYServ} → ${monto}`);
+          return sum + monto;
+        }
+        return sum;
+      }, 0);
+      const creditoFiscalReal = totalContratosConFactura * 0.18 / 1.18;
+      
+      // 🧾 Impuesto Estimado del Proyecto = Suma de CONTRATOS con F × 0.18 / 1.18
+      // Misma fórmula que Crédito Fiscal Real
+      const impuestoEstimado = totalContratosConFactura * 0.18 / 1.18;
+      
+      console.log('🧾 ===== CÁLCULO IGV - CONTRATOS CON F =====');
+      console.log(`   📊 Total contratos con factura (F): S/ ${totalContratosConFactura.toFixed(2)}`);
+      console.log(`   📐 Fórmula: ${totalContratosConFactura.toFixed(2)} × 0.18 / 1.18`);
+      console.log(`   💰 Crédito Fiscal Real: S/ ${creditoFiscalReal.toFixed(2)}`);
+      console.log(`   💰 Impuesto Estimado del Proyecto: S/ ${impuestoEstimado.toFixed(2)}`);
+      console.log('🧾 ===========================================');
+      
       // Nuevo cálculo solicitado: Impuesto Real = IGV - Crédito Fiscal Estimado
       const impuestoReal = igvSunat - creditoFiscalEstimado;
       
@@ -754,6 +1315,16 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       updateField('creditoFiscalReal', creditoFiscalReal);
       updateField('impuestoRealDelProyecto', impuestoReal);
       
+      // Actualizar también en projectData local para mostrar inmediatamente
+      setProjectData(prev => ({
+        ...prev,
+        impuestoEstimadoDelProyecto: formatMoney(impuestoEstimado),
+        creditoFiscalReal: formatMoney(creditoFiscalReal),
+        creditoFiscalEstimado: formatMoney(creditoFiscalEstimado),
+        igvSunat: formatMoney(igvSunat),
+        impuestoRealDelProyecto: formatMoney(impuestoReal)
+      }));
+      
       console.log('🧮 Sincronización automática completada:', {
         totalContrato: totalesCategoria.totalContrato,
         totalEgresos: totalesCategoria.totalEgresos,
@@ -761,7 +1332,11 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
         utilidadRealCF,
         saldoXCobrar: montoContrato - adelantos,
         igvSunat,
-        creditoFiscalReal
+        creditoFiscalReal,
+        impuestoEstimado,
+        totalContratosConFactura,
+        '📊 Impuesto Estimado calculado': impuestoEstimado,
+        '📊 Total contratos con F': totalContratosConFactura
       });
     }
   }, [
@@ -772,6 +1347,53 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     projectData.utilidadEstimadaConFactura,
     updateField
   ]);
+
+  // 🧾 CALCULAR IMPUESTO ESTIMADO Y CRÉDITO FISCAL REAL cuando cambian contratos con F
+  // Crear una dependencia estable basada en los valores de contratoProvedYServ de categorías con F
+  const contratosConFacturaKey = useMemo(() => {
+    if (!projectData.categorias || projectData.categorias.length === 0) return '';
+    return projectData.categorias
+      .filter(cat => (cat?.tipo || '').toString().toUpperCase() === 'F')
+      .map(cat => `${cat.id}:${parseMonetary(cat.contratoProvedYServ || 0)}`)
+      .join('|');
+  }, [projectData.categorias]);
+
+  useEffect(() => {
+    if (!projectData.categorias || projectData.categorias.length === 0) return;
+    
+    // Calcular suma de contratos con F
+    const totalContratosConFactura = projectData.categorias.reduce((sum, cat) => {
+      const esTipoF = (cat?.tipo || '').toString().toUpperCase() === 'F';
+      if (esTipoF) {
+        const monto = parseMonetary(cat.contratoProvedYServ || 0);
+        console.log(`   📌 Categoría con F: "${cat.nombre}" - Contrato: ${cat.contratoProvedYServ} → ${monto}`);
+        return sum + monto;
+      }
+      return sum;
+    }, 0);
+    
+    // Calcular valores
+    const creditoFiscalReal = totalContratosConFactura * 0.18 / 1.18;
+    const impuestoEstimado = totalContratosConFactura * 0.18 / 1.18;
+    
+    console.log('🧾 ===== RECÁLCULO IMPUESTO ESTIMADO Y CRÉDITO FISCAL REAL =====');
+    console.log(`   📊 Total contratos con factura (F): S/ ${totalContratosConFactura.toFixed(2)}`);
+    console.log(`   📐 Fórmula: ${totalContratosConFactura.toFixed(2)} × 0.18 / 1.18`);
+    console.log(`   💰 Crédito Fiscal Real: S/ ${creditoFiscalReal.toFixed(2)}`);
+    console.log(`   💰 Impuesto Estimado del Proyecto: S/ ${impuestoEstimado.toFixed(2)}`);
+    console.log('🧾 ============================================================');
+    
+    // Actualizar en el servicio
+    updateField('creditoFiscalReal', creditoFiscalReal);
+    updateField('impuestoEstimadoDelProyecto', impuestoEstimado);
+    
+    // Actualizar localmente para mostrar inmediatamente
+    setProjectData(prev => ({
+      ...prev,
+      creditoFiscalReal: formatMoney(creditoFiscalReal),
+      impuestoEstimadoDelProyecto: formatMoney(impuestoEstimado)
+    }));
+  }, [contratosConFacturaKey, updateField]);
 
   // 📊 SINCRONIZAR TOTALES CON DATOS DEL SERVICIO
   useEffect(() => {
@@ -1247,7 +1869,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     }));
   };
 
-  // Cargar datos del proyecto si existe**
+  // Cargar datos del proyecto si existe
   useEffect(() => {
     if (proyecto) {
       setProjectData(prev => ({
@@ -1325,35 +1947,35 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                   onChange={(e) => handleInputChange('nombreCliente', e.target.value)}
                   className="border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-300"
                 placeholder="Cliente"
-          />
-        </div>
+                />
+              </div>
               <div className="flex flex-col gap-1">
                 <span className="font-semibold text-gray-700">Estado</span>
-              <select
-                value={projectData.estado}
-                onChange={(e) => handleInputChange('estado', e.target.value)}
+            <select
+              value={projectData.estado}
+              onChange={(e) => handleInputChange('estado', e.target.value)}
                   className="border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-300"
                 >
                   <option value="En Cierre">En Cierre</option>
                   <option value="Ejecución">Ejecución</option>
                   <option value="Cobranza">Cobranza</option>
                   <option value="Archivado">Archivado</option>
-              </select>
-            </div>
+            </select>
+              </div>
               <div className="flex flex-col gap-1">
                 <span className="font-semibold text-gray-700">Tipo</span>
-              <select
-                value={projectData.tipo}
-                onChange={(e) => handleInputChange('tipo', e.target.value)}
+            <select
+              value={projectData.tipo}
+              onChange={(e) => handleInputChange('tipo', e.target.value)}
                   className="border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-300"
                 >
                   <option value="Facturado">Facturado</option>
                   <option value="Boleta de venta">Boleta de venta</option>
                   <option value="Recibo Interno">Recibo Interno</option>
-              </select>
-                </div>
+            </select>
               </div>
             </div>
+          </div>
         </aside>
 
         {/* Tabla principal de categorías */}
@@ -1367,19 +1989,21 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
         <div className="bg-gray-800 text-white px-3 py-2 text-sm font-medium flex items-center">
           <span>📊 CATEGORÍAS Y SERVICIOS DEL PROYECTO</span>
             </div>
-
+          
 
 
         {/* Barra superior: Monto del Contrato (entrada rápida) */}
         <div className="px-3 py-2 bg-white border-b border-gray-200 flex items-center justify-between">
           <span className="text-xs font-semibold text-gray-700">Monto del Contrato</span>
           <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={formatMoney(projectData.montoContrato || 0)}
+          <input
+            type="text"
+              value={editingMontoContrato ? montoContratoRaw : formatMonetaryDisplay(projectData.montoContrato)}
               onChange={(e) => handleMontoContratoChange(e.target.value)}
+              onFocus={handleMontoContratoFocus}
+              onBlur={handleMontoContratoBlur}
               className="text-left text-xs border border-gray-300 rounded px-2 py-1 w-32 bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"
-              placeholder="S/0"
+              placeholder="S/0.00"
             />
             <button
               onClick={() => setCobranzasPopupOpen(true)}
@@ -1388,7 +2012,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
             >
               Abrir
             </button>
-          </div>
+            </div>
             </div>
 
         {/* Contenedor con scroll horizontal y vertical para responsive */}
@@ -1420,7 +2044,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
             
             {/* Body de la tabla con celdas blancas editables */}
             <tbody>
-              {projectData.categorias.map((categoria) => (
+              {projectData.categorias.map((categoria, index) => (
                 <tr key={categoria.id} className="hover:bg-gray-50 h-5">
                   {/* Columna F dedicada */}
                   <td className="border border-gray-400 px-0 py-0 bg-white text-center align-middle min-w-[22px] w-[22px]">
@@ -1444,10 +2068,18 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                   <td className="border border-gray-400 px-1 py-0 bg-white align-middle" style={{width: '70px', minWidth: '70px', maxWidth: '70px'}}>
                   <input
                     type="text"
-                      value={`S/${Math.round(parseFloat(categoria.presupuestoDelProyecto) || 0)}`}
-                    onChange={(e) => handleCategoriaChange(categoria.id, 'presupuestoDelProyecto', e.target.value.replace(/\$\/|S\//g, '').trim())}
+                    value={(() => {
+                      const cellKey = `${categoria.id}-presupuestoDelProyecto`;
+                      if (editingCells[cellKey]) {
+                        return editingValues[cellKey] || '';
+                      }
+                      return formatMonetaryDisplay(categoria.presupuestoDelProyecto);
+                    })()}
+                    onChange={(e) => handleCategoriaChange(categoria.id, 'presupuestoDelProyecto', e.target.value)}
+                    onFocus={() => handleMonetaryCellFocus(categoria.id, 'presupuestoDelProyecto', categoria.presupuestoDelProyecto)}
+                    onBlur={() => handleMonetaryCellBlur(categoria.id, 'presupuestoDelProyecto')}
                       className="w-full text-[9px] border-none outline-none text-left bg-transparent h-4 leading-tight px-0"
-                      placeholder="S/0"
+                    placeholder="S/0.00"
                   />
                   </td>
                   <td
@@ -1471,10 +2103,18 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     <div className="relative w-full">
                   <input
                     type="text"
-                        value={`S/${(parseFloat(categoria.contratoProvedYServ) || 0).toFixed(2)}`}
-                    onChange={(e) => handleCategoriaChange(categoria.id, 'contratoProvedYServ', e.target.value.replace(/\$\/|S\//g, '').trim())}
-                        className="w-full text-[9px] border-none outline-none text-left bg-transparent h-4 leading-tight pr-5"
-                        placeholder="S/0.00"
+                    value={(() => {
+                      const cellKey = `${categoria.id}-contratoProvedYServ`;
+                      if (editingCells[cellKey]) {
+                        return editingValues[cellKey] || '';
+                      }
+                      return formatMonetaryDisplay(categoria.contratoProvedYServ);
+                    })()}
+                    onChange={(e) => handleCategoriaChange(categoria.id, 'contratoProvedYServ', e.target.value)}
+                    onFocus={() => handleMonetaryCellFocus(categoria.id, 'contratoProvedYServ', categoria.contratoProvedYServ)}
+                    onBlur={() => handleMonetaryCellBlur(categoria.id, 'contratoProvedYServ')}
+                    className="w-full text-[9px] border-none outline-none text-left bg-transparent h-4 leading-tight pr-5"
+                    placeholder="S/0.00"
                       />
                       <button
                         type="button"
@@ -1491,10 +2131,18 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                   <div className="relative w-full">
                   <input
                     type="text"
-                      value={`S/${(parseFloat(categoria.registroEgresos) || 0).toFixed(2)}`}
-                    onChange={(e) => handleCategoriaChange(categoria.id, 'registroEgresos', e.target.value.replace(/\$\/|S\//g, '').trim())}
-                        className="w-full text-[9px] border-none outline-none text-left bg-transparent h-4 leading-tight pr-5"
-                        placeholder="S/0.00"
+                    value={(() => {
+                      const cellKey = `${categoria.id}-registroEgresos`;
+                      if (editingCells[cellKey]) {
+                        return editingValues[cellKey] || '';
+                      }
+                      return formatMonetaryDisplay(categoria.registroEgresos);
+                    })()}
+                    onChange={(e) => handleCategoriaChange(categoria.id, 'registroEgresos', e.target.value)}
+                    onFocus={() => handleMonetaryCellFocus(categoria.id, 'registroEgresos', categoria.registroEgresos)}
+                    onBlur={() => handleMonetaryCellBlur(categoria.id, 'registroEgresos')}
+                    className="w-full text-[9px] border-none outline-none text-left bg-transparent h-4 leading-tight pr-5"
+                    placeholder="S/0.00"
                       />
                     <button
                       type="button"
@@ -1506,9 +2154,31 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     </button>
                   </div>
                   </td>
-                  <td className="border border-gray-400 px-1 py-0 bg-gray-200 text-center align-middle" style={{width: '80px', minWidth: '80px', maxWidth: '80px'}}>
+                  <td className={`border border-gray-400 px-1 py-0 text-center align-middle ${shouldHaveGrayBackground(categoria.nombre) ? 'bg-gray-300' : 'bg-white'}`} style={{width: '80px', minWidth: '80px', maxWidth: '80px'}}>
                     <span className="text-[9px] text-red-600 font-semibold leading-tight">
-                      {categoria.saldosPorCancelar || 'S/0.00'}
+                      {(() => {
+                        // Verificar qué fórmula usar según el tipo de fila
+                        // IMPORTANTE: Las filas marcadas en rojo SIEMPRE usan Contrato Prov. Y Serv., nunca Presup. Del Proy.
+                        const esFilaMarcada = shouldSumInTotalSaldos(categoria.nombre);
+                        const usarPresupuesto = !esFilaMarcada && shouldUsePresupuestoFormula(categoria);
+                        
+                        if (esFilaMarcada) {
+                          // Para filas marcadas en rojo: SIEMPRE usar Contrato Prov. Y Serv. - Registro Egresos (ignorar Presup. Del Proy.)
+                          const contrato = parseMonetary(categoria.contratoProvedYServ || 0);
+                          const egresos = parseMonetary(categoria.registroEgresos || 0);
+                          const resultado = contrato - egresos;
+                          return formatMonetaryDisplay(resultado);
+                        } else if (usarPresupuesto) {
+                          // Para filas NO marcadas con Presup. Del Proy. > 0: Presup. Del Proy. - Registro Egresos
+                          const presupuesto = parseMonetary(categoria.presupuestoDelProyecto || 0);
+                          const egresos = parseMonetary(categoria.registroEgresos || 0);
+                          const resultado = presupuesto - egresos;
+                          return formatMonetaryDisplay(resultado);
+                        } else {
+                          // Para las demás filas: mostrar el valor actual sin calcular automáticamente
+                          return formatMonetaryDisplay(categoria.saldosPorCancelar || 0);
+                        }
+                      })()}
                     </span>
                   </td>
                 </tr>
@@ -1524,16 +2194,16 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                 </td>
                 {/* Totales por columna */}
                 <td className="border border-gray-400 px-1 py-0.5 text-center text-[9px] bg-green-600" style={{width: '70px', minWidth: '70px', maxWidth: '70px'}}>
-                  S/ {totalesCalculados.presupuesto.toFixed(2)}
+                  {formatMoney(totalesCalculados.presupuesto)}
                 </td>
                 <td className="border border-gray-400 px-1 py-0.5 text-center text-[9px] bg-blue-600" style={{width: '100px', minWidth: '100px', maxWidth: '100px'}}>
-                  S/ {totalesCalculados.contrato.toFixed(2)}
+                  {formatMoney(totalesCalculados.contrato)}
                 </td>
                 <td className="border border-gray-400 px-1 py-0.5 text-center text-[9px] bg-red-600 font-bold" style={{width: '100px', minWidth: '100px', maxWidth: '100px'}}>
-                  S/ {totalesCalculados.egresos.toFixed(2)}
+                  {formatMoney(totalesCalculados.egresos)}
                 </td>
                 <td className="border border-gray-400 px-1 py-0.5 text-center text-[9px] bg-gray-600" style={{width: '80px', minWidth: '80px', maxWidth: '80px'}}>
-                  S/ {totalesCalculados.saldos.toFixed(2)}
+                  {formatMoney(totalesCalculados.saldos)}
                 </td>
               </tr>
             </tbody>
@@ -1651,7 +2321,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Total Contrato Proveedores</td>
                       <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
-                        {projectData.totalContratoProveedores || 'S/0.00'}
+                        {formatMoney(totalesCalculados.contrato) || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
@@ -1665,7 +2335,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                         Balance De Compras Del Proyecto
                       </td>
                       <td className="border border-gray-400 px-1 py-0.5 bg-white text-black font-bold text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1" style={{ borderTop: '4px solid #000' }}>
-                        {projectData.balanceDeComprasDelProyecto || 'S/0.00'}
+                        {formatMoney(totalesHorizontales.presupuesto - totalesHorizontales.egresos) || 'S/0.00'}
                       </td>
                     </tr>
                     {/* Separador visual - bloque inferior */}
@@ -1709,13 +2379,13 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Presupuesto Del Proyecto</td>
                       <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
-                        {projectData.presupuestoProyecto || 'S/0.00'}
+                        {formatMoney(totalesHorizontales.presupuesto) || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Total de Egresos del Proyecto</td>
                       <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
-                        {projectData.totalEgresosProyecto || 'S/0.00'}
+                        {formatMoney(totalesHorizontales.egresos) || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
@@ -1971,8 +2641,10 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                         type="text" 
                         className="w-full border-none outline-none text-xs px-1 py-0.5 text-left" 
                             placeholder="S/0.00"
-                            value={formatMoney(projectData.montoContrato || 0)}
+                            value={editingMontoContrato ? montoContratoRaw : formatMonetaryDisplay(projectData.montoContrato)}
                         onChange={(e) => handleMontoContratoChange(e.target.value)}
+                        onFocus={handleMontoContratoFocus}
+                        onBlur={handleMontoContratoBlur}
                       />
                     </td>
                   </tr>
@@ -1991,8 +2663,16 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                         type="text" 
                         className="w-full border-none outline-none text-xs px-1 py-0.5 text-left" 
                               placeholder="S/0.00"
-                              value={(parseFloat(cobranza.monto) || 0) === 0 ? '' : formatMoney(cobranza.monto || 0)}
+                              value={(() => {
+                                const cellKey = `cobranza-${index}-monto`;
+                                if (editingCells[cellKey]) {
+                                  return editingValues[cellKey] || '';
+                                }
+                                return formatMonetaryDisplay(cobranza.monto || 0);
+                              })()}
                         onChange={(e) => handleCobranzaChange(index, 'monto', e.target.value)}
+                        onFocus={() => handleCobranzaMontoFocus(index, cobranza.monto)}
+                        onBlur={() => handleCobranzaMontoBlur(index)}
                       />
                     </td>
                   </tr>

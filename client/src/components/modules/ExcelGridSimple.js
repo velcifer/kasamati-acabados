@@ -89,12 +89,11 @@ const ExcelGridSimple = () => {
   // 📊 Datos de proyectos con sincronización automática
   const { data: rawData, updateCell, createProject: createNewProject, deleteProject } = useExcelGrid();
   
-  // 🧹 FILTRO DE SEGURIDAD: Eliminar filas corruptas ANTES de renderizar
+  // 🧹 FILTRO DE SEGURIDAD: Eliminar filas corruptas ANTES de renderizar (SIN RECARGAR)
   const data = useMemo(() => {
     if (!rawData || typeof rawData !== 'object') return {};
     
     const cleanData = {};
-    let hasCorruptedRows = false;
     
     Object.keys(rawData).forEach(key => {
       const proyecto = rawData[key];
@@ -107,38 +106,9 @@ const ExcelGridSimple = () => {
           proyecto.nombreProyecto !== 'null' &&
           proyecto.nombreProyecto.trim() !== '') {
         cleanData[key] = proyecto;
-      } else {
-        console.error('🗑️ FILA CORRUPTA DETECTADA Y ELIMINADA:', {
-          key,
-          nombreProyecto: proyecto?.nombreProyecto,
-          proyecto: proyecto
-        });
-        hasCorruptedRows = true;
-        
-        // Eliminar del localStorage inmediatamente
-        try {
-          const proyectosData = localStorage.getItem('ksamati_projects');
-          if (proyectosData) {
-            const proyectos = JSON.parse(proyectosData);
-            if (proyectos[key]) {
-              delete proyectos[key];
-              localStorage.setItem('ksamati_projects', JSON.stringify(proyectos));
-              console.log('💾 Fila corrupta eliminada del localStorage:', key);
-            }
-          }
-        } catch (e) {
-          console.error('Error al limpiar localStorage:', e);
-        }
       }
+      // Si es corrupta, simplemente no la incluimos (sin recargar)
     });
-    
-    // Si había filas corruptas, mostrar alerta
-    if (hasCorruptedRows) {
-      console.warn('⚠️ Se detectaron y eliminaron filas corruptas. Recargando en 2 segundos...');
-      setTimeout(() => {
-        window.location.reload();
-      }, 2000);
-    }
     
     return cleanData;
   }, [rawData]);
@@ -151,105 +121,10 @@ const ExcelGridSimple = () => {
     tipoProyecto: ''
   });
   
-  // 🔄 Cargar datos iniciales y limpieza forzada
+  // 🔄 Cargar datos iniciales (sin limpieza agresiva que recarga)
   useEffect(() => {
-    // LIMPIEZA ULTRA FORZADA de filas corruptas
-    const ultraCleanCorruptedRows = () => {
-      try {
-        console.log('🧹🔥 LIMPIEZA ULTRA FORZADA INICIADA...');
-        const proyectosData = localStorage.getItem('proyectos');
-        
-        if (proyectosData) {
-          let proyectos = JSON.parse(proyectosData);
-          const originalLength = proyectos.length;
-          
-          console.log('📊 Total de proyectos ANTES:', originalLength);
-          console.log('📋 Datos RAW:', proyectos);
-          
-          // FILTRO ULTRA ESTRICTO: Validar TODOS los campos críticos
-          const cleanProyectos = proyectos.filter((p, index) => {
-            console.log(`\n🔍 Analizando fila ${index}:`, p);
-            
-            // 1. Verificar que el proyecto exista
-            if (!p || p === null || p === undefined) {
-              console.log(`❌ Fila ${index}: es null/undefined`);
-              return false;
-            }
-            
-            // 2. Verificar que sea un objeto válido
-            if (typeof p !== 'object') {
-              console.log(`❌ Fila ${index}: no es un objeto`);
-              return false;
-            }
-            
-            // 3. Verificar ID válido (número positivo)
-            if (!p.id || typeof p.id !== 'number' || isNaN(p.id) || p.id <= 0) {
-              console.log(`❌ Fila ${index}: ID inválido (${p.id}) tipo: ${typeof p.id}`);
-              return false;
-            }
-            
-            // 4. Verificar nombreProyecto válido (no vacío, no "undefined")
-            if (!p.nombreProyecto || 
-                typeof p.nombreProyecto !== 'string' || 
-                p.nombreProyecto.trim() === '' ||
-                p.nombreProyecto === 'undefined' ||
-                p.nombreProyecto === 'null') {
-              console.log(`❌ Fila ${index}: nombreProyecto inválido ("${p.nombreProyecto}")`);
-              return false;
-            }
-            
-            // 5. Verificar que tenga al menos los campos básicos
-            const requiredFields = ['estadoProyecto', 'tipoProyecto'];
-            const hasRequiredFields = requiredFields.every(field => p[field] !== undefined);
-            if (!hasRequiredFields) {
-              console.log(`❌ Fila ${index}: faltan campos requeridos`);
-              return false;
-            }
-            
-            // ✅ La fila pasó TODAS las validaciones
-            console.log(`✅ Fila ${index}: VÁLIDA - ID:${p.id}, Nombre:"${p.nombreProyecto}"`);
-            return true;
-          });
-          
-          const removedCount = originalLength - cleanProyectos.length;
-          console.log(`\n📊 RESULTADO:`);
-          console.log(`   - Filas originales: ${originalLength}`);
-          console.log(`   - Filas válidas: ${cleanProyectos.length}`);
-          console.log(`   - Filas eliminadas: ${removedCount}`);
-          
-          if (removedCount > 0) {
-            console.log(`\n🗑️ ELIMINANDO ${removedCount} fila(s) corrupta(s)...`);
-            console.log('📋 Proyectos que SE MANTIENEN:', cleanProyectos);
-            
-            // Guardar los datos limpios
-            localStorage.setItem('proyectos', JSON.stringify(cleanProyectos));
-            console.log('💾 Datos limpios guardados en localStorage');
-            
-            // Forzar recarga inmediata sin esperar
-            console.log('🔄 RECARGANDO PÁGINA AHORA...');
-            window.location.reload();
-            return;
-          } else {
-            console.log('✅ No se encontraron filas corruptas. Datos OK.');
-          }
-        } else {
-          console.log('ℹ️ No hay datos en localStorage - iniciando desde cero');
-        }
-      } catch (error) {
-        console.error('💥 ERROR CRÍTICO al limpiar:', error);
-        console.error('Stack:', error.stack);
-        // En caso de error grave, limpiar COMPLETAMENTE
-        console.log('🚨 LIMPIANDO TODO EL LOCALSTORAGE...');
-        localStorage.clear();
-        console.log('🔄 Recargando...');
-        window.location.reload();
-      }
-    };
-
-    // Ejecutar limpieza INMEDIATAMENTE al montar el componente
-    ultraCleanCorruptedRows();
-    
     // Los datos se cargan automáticamente con useExcelGrid
+    // El filtro en useMemo ya se encarga de eliminar filas corruptas sin recargar
     setLoading(false);
     setSyncMessage('✅ Datos sincronizados automáticamente');
     setTimeout(() => setSyncMessage(''), 2000);
@@ -280,6 +155,24 @@ const ExcelGridSimple = () => {
         })));
         
         // 🔄 PASO 2: Convertir a formato objeto con índices SECUENCIALES
+        // Función helper para formatear valores monetarios con separadores de miles y dos decimales
+        const formatMonetaryValue = (value) => {
+          if (!value && value !== 0) return '';
+          if (typeof value === 'string') {
+            // Si ya tiene formato S/ o $/, extraer el número
+            const cleaned = value.replace(/[S$\/,\s]/g, '');
+            const num = parseFloat(cleaned);
+            if (isNaN(num)) return value; // Si no es un número válido, devolver el valor original
+            // Formatear con separadores de miles y dos decimales
+            return `S/${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+          }
+          if (typeof value === 'number') {
+            // Formatear con separadores de miles y dos decimales
+            return `S/${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+          }
+          return value;
+        };
+        
         const projectsObject = {};
         let rowIndex = 1; // Empezar desde 1
         
@@ -294,22 +187,20 @@ const ExcelGridSimple = () => {
             nombreCliente: project.nombre_cliente || project.nombreCliente,
             estadoProyecto: project.estado_proyecto || project.estadoProyecto,
             tipoProyecto: project.tipo_proyecto || project.tipoProyecto,
-            montoContrato: project.monto_contrato || project.montoContrato,
-            presupuestoProyecto: project.presupuesto_proyecto || project.presupuestoProyecto,
-            balanceProyecto: project.balance_proyecto || project.balanceProyecto,
-            utilidadEstimadaSinFactura: project.utilidad_estimada_sin_factura || project.utilidadEstimadaSinFactura,
-            utilidadRealSinFactura: project.utilidad_real_sin_factura || project.utilidadRealSinFactura,
-            balanceUtilidadSinFactura: project.balance_utilidad_sin_factura || project.balanceUtilidadSinFactura,
-            utilidadEstimadaFacturado: project.utilidad_estimada_facturado || project.utilidadEstimadaFacturado,
-            utilidadRealFacturado: project.utilidad_real_facturado || project.utilidadRealFacturado,
-            balanceUtilidadConFactura: project.balance_utilidad_con_factura || project.balanceUtilidadConFactura,
-            totalContratoProveedores: project.total_contrato_proveedores || project.totalContratoProveedores,
-            saldoPagarProveedores: project.saldo_pagar_proveedores || project.saldoPagarProveedores,
-            adelantosCliente: project.adelantos_cliente || project.adelantosCliente,
-            saldosRealesProyecto: project.saldos_reales_proyecto || project.saldosRealesProyecto,
-            saldosCobrarProyecto: project.saldos_cobrar_proyecto || project.saldosCobrarProyecto,
-            creditoFiscal: project.credito_fiscal || project.creditoFiscal,
-            impuestoRealProyecto: project.impuesto_real_proyecto || project.impuestoRealProyecto
+            // Formatear todos los valores monetarios con dos decimales
+            montoContrato: formatMonetaryValue(project.monto_contrato || project.montoContrato),
+            presupuestoProyecto: formatMonetaryValue(project.presupuesto_proyecto || project.presupuestoProyecto),
+            balanceProyecto: formatMonetaryValue(project.balance_proyecto || project.balanceProyecto),
+            utilidadEstimadaSinFactura: formatMonetaryValue(project.utilidad_estimada_sin_factura || project.utilidadEstimadaSinFactura),
+            utilidadRealSinFactura: formatMonetaryValue(project.utilidad_real_sin_factura || project.utilidadRealSinFactura),
+            utilidadEstimadaFacturado: formatMonetaryValue(project.utilidad_estimada_facturado || project.utilidadEstimadaFacturado),
+            utilidadRealFacturado: formatMonetaryValue(project.utilidad_real_facturado || project.utilidadRealFacturado),
+            totalContratoProveedores: formatMonetaryValue(project.total_contrato_proveedores || project.totalContratoProveedores),
+            saldoPagarProveedores: formatMonetaryValue(project.saldo_pagar_proveedores || project.saldoPagarProveedores),
+            adelantosCliente: formatMonetaryValue(project.adelantos_cliente || project.adelantosCliente),
+            saldosCobrarProyecto: formatMonetaryValue(project.saldos_cobrar_proyecto || project.saldosCobrarProyecto),
+            creditoFiscal: formatMonetaryValue(project.credito_fiscal || project.creditoFiscal),
+            impuestoRealProyecto: formatMonetaryValue(project.impuesto_real_proyecto || project.impuestoRealProyecto)
           };
           
           rowIndex++; // Incrementar para el siguiente proyecto
@@ -395,9 +286,9 @@ const ExcelGridSimple = () => {
       return parseFloat(value.toString().replace(/[$,\/]/g, '')) || 0;
     };
 
-    // Convertir número a formato de dinero
+    // Convertir número a formato de dinero con separadores de miles y dos decimales
     const formatMoney = (value) => {
-      return `$/${value.toFixed(2)}`;
+      return `S/${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     };
 
     // 📊 EXTRAER VALORES PARA CÁLCULOS COMPLETOS
@@ -457,13 +348,10 @@ const ExcelGridSimple = () => {
       balanceProyecto: formatMoney(balancePresupuesto),
       utilidadEstimadaSinFactura: formatMoney(utilidadEstimadaSinCalculada),
       utilidadRealSinFactura: formatMoney(utilidadRealSinCalculada),
-      balanceUtilidadSinFactura: formatMoney(balanceUtilidadSin),
       utilidadEstimadaFacturado: formatMoney(utilidadEstimadaConCalculada),
       utilidadRealFacturado: formatMoney(utilidadRealConCalculada),
-      balanceUtilidadConFactura: formatMoney(balanceUtilidadCon),
       saldoPagarProveedores: formatMoney(saldoPagar),
       saldosCobrarProyecto: formatMoney(saldoCobrarProyecto),
-      saldosRealesProyecto: formatMoney(saldoCobrar),
       impuestoRealProyecto: formatMoney(impuestoRealCalculado),
       creditoFiscal: formatMoney(creditoFiscalCalculado)
     };
@@ -472,9 +360,28 @@ const ExcelGridSimple = () => {
   const handleCellChange = (rowIndex, columnKey, value) => {
     console.log('📝 CAMBIO EN CELDA - SISTEMA SINCRONIZADO:', { fila: rowIndex, campo: columnKey, valor: value });
     
+    // Lista de columnas monetarias que deben formatearse con dos decimales
+    const moneyColumns = [
+      'montoContrato', 'presupuestoProyecto', 'balanceProyecto',
+      'utilidadEstimadaSinFactura', 'utilidadRealSinFactura',
+      'utilidadEstimadaFacturado', 'utilidadRealFacturado',
+      'totalContratoProveedores', 'saldoPagarProveedores', 'adelantosCliente',
+      'saldosCobrarProyecto', 'creditoFiscal', 'impuestoRealProyecto'
+    ];
+    
+    // Formatear valor si es una columna monetaria con separadores de miles y dos decimales
+    let formattedValue = value;
+    if (moneyColumns.includes(columnKey) && value) {
+      const cleaned = value.toString().replace(/[S$\/,\s]/g, '');
+      const num = parseFloat(cleaned);
+      if (!isNaN(num)) {
+        formattedValue = `S/${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      }
+    }
+    
     // 🔄 SISTEMA NUEVO: Usar updateCell del hook para sincronización automática
     // Esto actualizará automáticamente tanto la tabla Excel como el detalle del proyecto
-    updateCell(rowIndex, columnKey, value);
+    updateCell(rowIndex, columnKey, formattedValue);
     
     // 🔄 Sincronizar con pestañas abiertas inmediatamente
     const openTab = tabs.find(tab => tab.rowIndex === parseInt(rowIndex));
@@ -486,9 +393,9 @@ const ExcelGridSimple = () => {
               ...tab,
               data: {
                 ...tab.data,
-                [columnKey]: value
+                [columnKey]: formattedValue
               },
-              name: columnKey === 'nombreProyecto' ? value || `Proyecto ${rowIndex}` : tab.name
+              name: columnKey === 'nombreProyecto' ? formattedValue || `Proyecto ${rowIndex}` : tab.name
             }
           : tab
       ));
@@ -518,8 +425,8 @@ const ExcelGridSimple = () => {
         nombreCliente: '',
         estadoProyecto: 'Ejecucion',
         tipoProyecto: 'Recibo',
-        montoContrato: 0,
-        presupuestoProyecto: 0
+        montoContrato: 'S/0.00',
+        presupuestoProyecto: 'S/0.00'
       };
       
       // El hook creará el proyecto automáticamente y actualizará el estado
@@ -940,10 +847,10 @@ const ExcelGridSimple = () => {
     // 💰 COLUMNAS DE DINERO/NÚMEROS (compactas pero legibles)
     const moneyColumns = [
       'montoContrato', 'presupuestoProyecto', 'balanceProyecto',
-      'utilidadEstimadaSinFactura', 'utilidadRealSinFactura', 'balanceUtilidadSinFactura',
-      'utilidadEstimadaFacturado', 'utilidadRealFacturado', 'balanceUtilidadConFactura',
+      'utilidadEstimadaSinFactura', 'utilidadRealSinFactura',
+      'utilidadEstimadaFacturado', 'utilidadRealFacturado',
       'totalContratoProveedores', 'saldoPagarProveedores', 'adelantosCliente',
-      'saldosRealesProyecto', 'saldosCobrarProyecto', 'creditoFiscal', 'impuestoRealProyecto'
+      'saldosCobrarProyecto', 'creditoFiscal', 'impuestoRealProyecto'
     ];
     
     const baseWidth = parseInt(config.columnWidth);
@@ -996,14 +903,14 @@ const ExcelGridSimple = () => {
       color: 'bg-blue-800',
       columns: [
         'montoContrato', 'presupuestoProyecto', 'balanceProyecto',
-        'utilidadEstimadaSinFactura', 'utilidadRealSinFactura', 'balanceUtilidadSinFactura',
-        'utilidadEstimadaFacturado', 'utilidadRealFacturado', 'balanceUtilidadConFactura'
+        'utilidadEstimadaSinFactura', 'utilidadRealSinFactura',
+        'utilidadEstimadaFacturado', 'utilidadRealFacturado'
       ]
     },
     {
       title: 'COBRANZAS Y SALDOS POR PAGAR',
       color: 'bg-green-600', 
-      columns: ['totalContratoProveedores', 'saldoPagarProveedores', 'adelantosCliente', 'saldosRealesProyecto', 'saldosCobrarProyecto']
+      columns: ['totalContratoProveedores', 'saldoPagarProveedores', 'adelantosCliente', 'saldosCobrarProyecto']
     },
     {
       title: 'SUNAT',
@@ -1047,14 +954,11 @@ const ExcelGridSimple = () => {
         balanceProyecto: 'Bal.',
         utilidadEstimadaSinFactura: 'U.E.SF',
         utilidadRealSinFactura: 'U.R.SF',
-        balanceUtilidadSinFactura: 'B.SF',
         utilidadEstimadaFacturado: 'U.E.F',
-        utilidadRealFacturado: 'U.R.F', 
-        balanceUtilidadConFactura: 'B.+/-',
+        utilidadRealFacturado: 'U.R.F',
         totalContratoProveedores: 'T.Prov',
         saldoPagarProveedores: 'S.Pagar',
         adelantosCliente: 'Adel.',
-        saldosRealesProyecto: 'S.Real',
         saldosCobrarProyecto: 'X Cobr',
         creditoFiscal: 'C.Fisc',
         impuestoRealProyecto: 'Imp.'
@@ -1071,14 +975,11 @@ const ExcelGridSimple = () => {
         balanceProyecto: 'Balance',
         utilidadEstimadaSinFactura: 'U.Est.SF',
         utilidadRealSinFactura: 'U.Real SF',
-        balanceUtilidadSinFactura: 'Bal. SF',
         utilidadEstimadaFacturado: 'U.Est.F',
-        utilidadRealFacturado: 'U.Real F', 
-        balanceUtilidadConFactura: 'Bal. +/-',
+        utilidadRealFacturado: 'U.Real F',
         totalContratoProveedores: 'Tot.Prov.',
         saldoPagarProveedores: 'Saldo Pagar',
         adelantosCliente: 'Adelantos',
-        saldosRealesProyecto: 'Saldo Real',
         saldosCobrarProyecto: 'X Cobrar',
         creditoFiscal: 'Créd.Fiscal',
         impuestoRealProyecto: 'Impuesto'
@@ -1095,14 +996,11 @@ const ExcelGridSimple = () => {
         balanceProyecto: 'Balance',
         utilidadEstimadaSinFactura: 'Util. Est. SF',
         utilidadRealSinFactura: 'Util. Real SF',
-        balanceUtilidadSinFactura: 'Bal. SF',
         utilidadEstimadaFacturado: 'Util. Est. F',
-        utilidadRealFacturado: 'Util. Real F', 
-        balanceUtilidadConFactura: 'Bal. +/-',
+        utilidadRealFacturado: 'Util. Real F',
         totalContratoProveedores: 'Total Prov.',
         saldoPagarProveedores: 'Saldo Pagar',
         adelantosCliente: 'Adelantos',
-        saldosRealesProyecto: 'Saldo Real',
         saldosCobrarProyecto: 'X Cobrar',
         creditoFiscal: 'Créd. Fiscal',
         impuestoRealProyecto: 'Impuesto'
@@ -1159,19 +1057,42 @@ const ExcelGridSimple = () => {
       // 🔥 TODOS LOS DEMÁS CAMPOS: INPUT ULTRA COMPACTO ESTILO EXCEL
       const moneyColumns = [
         'montoContrato', 'presupuestoProyecto', 'balanceProyecto',
-        'utilidadEstimadaSinFactura', 'utilidadRealSinFactura', 'balanceUtilidadSinFactura',
-        'utilidadEstimadaFacturado', 'utilidadRealFacturado', 'balanceUtilidadConFactura',
+        'utilidadEstimadaSinFactura', 'utilidadRealSinFactura',
+        'utilidadEstimadaFacturado', 'utilidadRealFacturado',
         'totalContratoProveedores', 'saldoPagarProveedores', 'adelantosCliente',
-        'saldosRealesProyecto', 'saldosCobrarProyecto', 'creditoFiscal', 'impuestoRealProyecto'
+        'saldosCobrarProyecto', 'creditoFiscal', 'impuestoRealProyecto'
       ];
       
+      // Función para formatear valores monetarios con separadores de miles y dos decimales
+      const formatMonetaryValue = (val, isMoneyColumn) => {
+        if (!val && val !== 0) return '';
+        if (!isMoneyColumn) return val;
+        
+        // Si ya tiene formato S/ o $/, extraer el número
+        const str = val.toString();
+        let numValue = str;
+        
+        // Remover símbolos de moneda y espacios (incluyendo comas existentes)
+        numValue = numValue.replace(/[S$\/,\s]/g, '');
+        
+        // Convertir a número
+        const num = parseFloat(numValue);
+        if (isNaN(num)) return val; // Si no es un número válido, devolver el valor original
+        
+        // Formatear con separadores de miles y dos decimales
+        return `S/${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      };
+      
+      const isMoneyColumn = moneyColumns.includes(columnKey);
+      const displayValue = isMoneyColumn ? formatMonetaryValue(value, true) : (value || '');
+      
       // Usar fuente más pequeña para números/dinero
-      const fontSize = moneyColumns.includes(columnKey) ? 'text-[7px]' : config.fontSize;
+      const fontSize = isMoneyColumn ? 'text-[7px]' : config.fontSize;
       
       return (
         <input
           type="text"
-          value={value || ''}
+          value={displayValue}
           onChange={(e) => handleCellChange(rowIndex, columnKey, e.target.value)}
           onClick={columnKey === 'nombreProyecto' ? () => handleRowClick(rowIndex) : undefined}
           className={`w-full h-full px-0.5 sm:px-0 border-none outline-none ${fontSize} bg-white text-black placeholder-gray-400 focus:bg-blue-50 focus:ring-1 focus:ring-blue-300 text-center leading-tight font-medium ${

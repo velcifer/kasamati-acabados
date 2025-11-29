@@ -21,18 +21,18 @@ const ExcelGrid = () => {
         nombreCliente: '',
         estadoProyecto: 'Ejecucion',
         tipoProyecto: 'Recibo',
-        montoProyecto: '$/0.00',
-        presupuestoProyecto: '$/0.00',
-        utilidadNominal: '$/0.00',
-        utilidadReal: '$/0.00',
-        utilidadEstimada: '$/0.00',
-        utilidadRealFacturado: '$/0.00',
-        totalContrato: '$/0.00',
-        saldoPagar: '$/0.00',
-        adelantosCliente: '$/0.00',
-        saldosReales: '$/0.00',
-        creditoFiscal: '$/0.00',
-        saldosReales2: '$/0.00'
+        montoProyecto: 'S/0.00',
+        presupuestoProyecto: 'S/0.00',
+        utilidadNominal: 'S/0.00',
+        utilidadReal: 'S/0.00',
+        utilidadEstimada: 'S/0.00',
+        utilidadRealFacturado: 'S/0.00',
+        totalContrato: 'S/0.00',
+        saldoPagar: 'S/0.00',
+        adelantosCliente: 'S/0.00',
+        saldosReales: 'S/0.00',
+        creditoFiscal: 'S/0.00',
+        saldosReales2: 'S/0.00'
       };
     }
     return initialData;
