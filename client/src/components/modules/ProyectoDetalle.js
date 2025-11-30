@@ -1033,13 +1033,14 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     const numericString = extractNumericValue(montoContratoRaw);
     const numericValue = parseFloat(numericString) || 0;
     // Calcular equivalentes: con factura (sin IGV) y sin factura
-    const estimadoSinFactura = numericValue;
     const estimadoConFactura = numericValue > 0 ? (numericValue / 1.18) : 0;
+    
+    // 🧮 UTILIDAD ESTIMADA SIN FACTURA se calculará automáticamente en el useEffect
+    // No establecerla aquí, se calculará como: Monto del Contrato - Presupuesto Del Proyecto
 
     setProjectData(prev => ({
       ...prev,
       montoContrato: numericValue,
-      utilidadEstimadaSinFactura: estimadoSinFactura,
       utilidadEstimadaConFactura: estimadoConFactura,
       // ⛔ Ya no propagar a todas las filas de Cobranzas. Dejarlas en 0 (vacías visualmente).
       cobranzas: Array.isArray(prev.cobranzas)
@@ -1050,9 +1051,9 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     // 🔄 AUTO-SAVE
     if (updateField) {
       updateField('montoContrato', numericValue);
-      // También actualizar utilidades estimadas derivadas del contrato
-      updateField('utilidadEstimadaSinFactura', estimadoSinFactura);
+      // También actualizar utilidad estimada con factura derivada del contrato
       updateField('utilidadEstimadaConFactura', estimadoConFactura);
+      // utilidadEstimadaSinFactura se calculará automáticamente en el useEffect
       try {
         // Guardar cobranzas actualizadas si existen
         const current = projectData?.cobranzas || [];
@@ -1206,47 +1207,121 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       
       // 📊 CAMPOS BÁSICOS DE TOTALES
       // Formatear valores con separadores de miles y dos decimales
-      // IMPORTANTE: Usar totalesCategoria que EXCLUYE filas marcadas en rojo
-      console.log('📊 COMPONENTE: Actualizando totales horizontales (excluyendo filas marcadas):', {
+      // Calcular totales completos de la tabla (incluye todas las filas)
+      const totalesCalculadosTabla = calcularTotalesTabla();
+      
+      console.log('📊 COMPONENTE: Actualizando totales:', {
         totalContrato: totalesCategoria.totalContrato,
         totalEgresos: totalesCategoria.totalEgresos,
-        totalPresupuesto: totalesCategoria.totalPresupuesto
+        totalPresupuestoCompleto: totalesCalculadosTabla.presupuesto,
+        totalEgresosCompleto: totalesCalculadosTabla.egresos
       });
       
       updateField('totalContratoProveedores', formatMoney(totalesCategoria.totalContrato));
       updateField('totalSaldoPorPagarProveedores', formatMoney(totalesCategoria.totalEgresos));
-      updateField('presupuestoProyecto', formatMoney(totalesCategoria.totalPresupuesto));
-      updateField('totalEgresosProyecto', formatMoney(totalesCategoria.totalEgresos));
+      // Presupuesto Del Proyecto = Total completo de Presup. Del Proy. de la fila TOTALES
+      updateField('presupuestoProyecto', formatMoney(totalesCalculadosTabla.presupuesto));
+      updateField('totalEgresosProyecto', formatMoney(totalesCalculadosTabla.egresos));
       
       // 🧮 ANÁLISIS FINANCIERO SIN FACTURA
-      const utilidadRealSF = utilidadEstimadaSF - totalesCategoria.totalEgresos;
+      // Utilidad Real Sin Factura = Monto del Contrato - Total Registro de Egresos (total completo de la tabla)
+      const totalEgresosCompleto = calcularTotalesTabla().egresos;
+      const utilidadRealSF = montoContrato - totalEgresosCompleto;
       updateField('utilidadRealSinFactura', utilidadRealSF);
-      updateField('balanceUtilidadSinFactura', utilidadRealSF);
       
-      // 🧮 ANÁLISIS FINANCIERO CON FACTURA  
-      const utilidadRealCF = utilidadEstimadaCF - totalesCategoria.totalEgresos;
-      updateField('utilidadRealConFactura', utilidadRealCF);
-      updateField('balanceUtilidadConFactura', utilidadRealCF);
+      // 🧮 UTILIDAD ESTIMADA SIN FACTURA = Monto del Contrato - Presupuesto Del Proyecto (total completo de la tabla)
+      const totalPresupuestoCompleto = calcularTotalesTabla().presupuesto;
+      const utilidadEstimadaSFCalculada = montoContrato - totalPresupuestoCompleto;
+      
+      // Balance de Utilidad +/- = Utilidad Estimada Sin Factura - Utilidad Real Sin Factura
+      const balanceUtilidadSF = utilidadEstimadaSFCalculada - utilidadRealSF;
+      updateField('balanceUtilidadSinFactura', balanceUtilidadSF);
       
       // 💰 COBRANZAS Y SALDOS
       // Usar totales horizontales (excluye filas marcadas) para los balances
       updateField('saldoXCobrar', montoContrato - adelantos);
-      updateField('balanceDeComprasDelProyecto', totalesCategoria.totalPresupuesto - totalesCategoria.totalEgresos);
-      updateField('balanceDelPresupuesto', totalesCategoria.totalPresupuesto - montoContrato);
+      // Balance De Compras Del Proyecto = (Suma de Presup. Del Proy. de categorías específicas + Suma de Contrato Prov. Y Serv. de categorías específicas) - Total Registro Egresos
+      const categoriasPresupuesto = [
+        'melamina y servicios',
+        'melamina high gloss',
+        'accesorios y ferretería',
+        'accesorios y ferreteria',
+        'puertas alu y vidrios',
+        'puertas alu vidrios',
+        'led y electricidad',
+        'flete y/o camioneta',
+        'logística operativa',
+        'logistica operativa',
+        'extras y/o eventos'
+      ];
+      
+      const categoriasContrato = [
+        'despecie',
+        'mano de obra',
+        'of - escp',
+        'of escp',
+        'granito y/o cuarzo',
+        'granito y/o cuarz',
+        'extras y/o eventos gyc',
+        'extras y/o eventos g y c',
+        'tercializacion 1 facturada',
+        'tercialización 1 facturada',
+        'extras y/o eventos terc. 1',
+        'extras y/o eventos tercializacion 1',
+        'tercializacion 2 facturada',
+        'tercialización 2 facturada',
+        'extras y/o eventos terc. 2',
+        'extras y/o eventos tercializacion 2',
+        'tercializacion 1 no facturada',
+        'tercialización 1 no facturada',
+        'extras y/o eventos terc. 1 nf',
+        'extras y/o eventos tercializacion 1 nf',
+        'tercializacion 2 no facturada',
+        'tercialización 2 no facturada'
+      ];
+      
+      const sumaPresupuestoEspecifico = (projectData.categorias || []).reduce((sum, cat) => {
+        const nombre = (cat?.nombre || '').toString().toLowerCase().trim();
+        const incluir = categoriasPresupuesto.some(catName => nombre === catName || nombre.includes(catName));
+        if (incluir) {
+          return sum + parseMonetary(cat.presupuestoDelProyecto || 0);
+        }
+        return sum;
+      }, 0);
+      
+      const sumaContratoEspecifico = (projectData.categorias || []).reduce((sum, cat) => {
+        const nombre = (cat?.nombre || '').toString().toLowerCase().trim();
+        const incluir = categoriasContrato.some(catName => nombre === catName || nombre.includes(catName));
+        if (incluir) {
+          return sum + parseMonetary(cat.contratoProvedYServ || 0);
+        }
+        return sum;
+      }, 0);
+      
+      const balanceDeCompras = (sumaPresupuestoEspecifico + sumaContratoEspecifico) - totalesCalculadosTabla.egresos;
+      updateField('balanceDeComprasDelProyecto', balanceDeCompras);
+      // Balance Del Presupuesto = Presupuesto Del Proyecto - Total de Egresos del Proyecto
+      const balanceDelPresupuestoCalculado = totalesCalculadosTabla.presupuesto - totalesCalculadosTabla.egresos;
+      updateField('balanceDelPresupuesto', balanceDelPresupuestoCalculado);
+      
+      // 🧮 UTILIDAD ESTIMADA SIN FACTURA = Monto del Contrato - Presupuesto Del Proyecto (total completo de la tabla)
+      // Ya calculado arriba, reutilizamos la variable
+      updateField('utilidadEstimadaSinFactura', utilidadEstimadaSFCalculada);
       
       // Actualizar también en projectData local para mostrar inmediatamente
       setProjectData(prev => ({
         ...prev,
+        utilidadEstimadaSinFactura: formatMoney(utilidadEstimadaSFCalculada),
+        utilidadEstimadaConFactura: formatMoney(utilidadEstimadaCFCalculada),
         totalContratoProveedores: formatMoney(totalesCategoria.totalContrato),
         totalSaldoPorPagarProveedores: formatMoney(totalesCategoria.totalEgresos),
-        presupuestoProyecto: formatMoney(totalesCategoria.totalPresupuesto),
-        totalEgresosProyecto: formatMoney(totalesCategoria.totalEgresos),
-        balanceDeComprasDelProyecto: formatMoney(totalesCategoria.totalPresupuesto - totalesCategoria.totalEgresos),
-        balanceDelPresupuesto: formatMoney(totalesCategoria.totalPresupuesto - montoContrato),
+        presupuestoProyecto: formatMoney(totalesCalculadosTabla.presupuesto),
+        totalEgresosProyecto: formatMoney(totalesCalculadosTabla.egresos),
+        balanceDeComprasDelProyecto: formatMoney(balanceDeCompras),
+        balanceDelPresupuesto: formatMoney(totalesCalculadosTabla.presupuesto - totalesCalculadosTabla.egresos),
         utilidadRealSinFactura: formatMoney(utilidadRealSF),
-        balanceUtilidadSinFactura: formatMoney(utilidadRealSF),
-        utilidadRealConFactura: formatMoney(utilidadRealCF),
-        balanceUtilidadConFactura: formatMoney(utilidadRealCF)
+        balanceUtilidadSinFactura: formatMoney(balanceUtilidadSF)
+        // Nota: utilidadRealConFactura y balanceUtilidadConFactura se actualizan después de calcular el impuesto estimado
       }));
       
       // 🧾 IGV - SUNAT 18% (calculados automáticamente)
@@ -1282,32 +1357,33 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       }, 0);
       const creditoFiscalEstimado = (baseCredito / 1.18) * igvRate;
       
-      // 🧾 Crédito Fiscal Real = Suma de CONTRATOS con F × 0.18 / 1.18
-      const totalContratosConFactura = (projectData.categorias || []).reduce((sum, cat) => {
+      // 🧾 Crédito Fiscal Real = Suma de REGISTRO EGRESOS con F / 1.18 * 18%
+      const totalEgresosConFactura = (projectData.categorias || []).reduce((sum, cat) => {
         const esTipoF = (cat?.tipo || '').toString().toUpperCase() === 'F';
         if (esTipoF) {
           // Usar parseMonetary para manejar diferentes formatos (número, string con S/, etc.)
-          const monto = parseMonetary(cat.contratoProvedYServ || 0);
-          console.log(`   📌 Categoría con F: "${cat.nombre}" - Contrato: ${cat.contratoProvedYServ} → ${monto}`);
+          const monto = parseMonetary(cat.registroEgresos || 0);
+          console.log(`   📌 Categoría con F: "${cat.nombre}" - Registro Egresos: ${cat.registroEgresos} → ${monto}`);
           return sum + monto;
         }
         return sum;
       }, 0);
-      const creditoFiscalReal = totalContratosConFactura * 0.18 / 1.18;
+      const creditoFiscalReal = (totalEgresosConFactura / 1.18) * 0.18;
       
-      // 🧾 Impuesto Estimado del Proyecto = Suma de CONTRATOS con F × 0.18 / 1.18
-      // Misma fórmula que Crédito Fiscal Real
-      const impuestoEstimado = totalContratosConFactura * 0.18 / 1.18;
+      // 🧾 Impuesto Estimado del Proyecto = IGV - SUNAT 18% - Crédito Fiscal Estimado
+      const impuestoEstimado = igvSunat - creditoFiscalEstimado;
       
-      console.log('🧾 ===== CÁLCULO IGV - CONTRATOS CON F =====');
-      console.log(`   📊 Total contratos con factura (F): S/ ${totalContratosConFactura.toFixed(2)}`);
-      console.log(`   📐 Fórmula: ${totalContratosConFactura.toFixed(2)} × 0.18 / 1.18`);
+      console.log('🧾 ===== CÁLCULO IGV - EGRESOS CON F =====');
+      console.log(`   📊 Total egresos con factura (F): S/ ${totalEgresosConFactura.toFixed(2)}`);
+      console.log(`   📐 Fórmula Crédito Fiscal Real: ${totalEgresosConFactura.toFixed(2)} / 1.18 × 18%`);
       console.log(`   💰 Crédito Fiscal Real: S/ ${creditoFiscalReal.toFixed(2)}`);
-      console.log(`   💰 Impuesto Estimado del Proyecto: S/ ${impuestoEstimado.toFixed(2)}`);
+      console.log(`   💰 IGV - SUNAT 18%: S/ ${igvSunat.toFixed(2)}`);
+      console.log(`   💰 Crédito Fiscal Estimado: S/ ${creditoFiscalEstimado.toFixed(2)}`);
+      console.log(`   💰 Impuesto Estimado del Proyecto: S/ ${impuestoEstimado.toFixed(2)} (IGV - Crédito Fiscal Estimado)`);
       console.log('🧾 ===========================================');
       
-      // Nuevo cálculo solicitado: Impuesto Real = IGV - Crédito Fiscal Estimado
-      const impuestoReal = igvSunat - creditoFiscalEstimado;
+      // Impuesto Real del Proyecto = IGV - SUNAT 18% - Crédito Fiscal Real
+      const impuestoReal = igvSunat - creditoFiscalReal;
       
       updateField('igvSunat', igvSunat);
       updateField('creditoFiscalEstimado', creditoFiscalEstimado);
@@ -1315,11 +1391,28 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       updateField('creditoFiscalReal', creditoFiscalReal);
       updateField('impuestoRealDelProyecto', impuestoReal);
       
+      // 🧮 ANÁLISIS FINANCIERO CON FACTURA (después de calcular impuesto estimado)
+      // Utilidad Estimada Con Factura = Monto del Contrato - (Presupuesto Del Proyecto + Impuesto Estimado del Proyecto)
+      const utilidadEstimadaCFCalculada = montoContrato - (totalesCalculadosTabla.presupuesto + impuestoEstimado);
+      updateField('utilidadEstimadaConFactura', utilidadEstimadaCFCalculada);
+      
+      // Utilidad Real Con Factura = Monto del Contrato - (Total Registro de Egresos + Crédito Fiscal Real)
+      const totalEgresosCompletoCF = totalesCalculadosTabla.egresos;
+      const utilidadRealCF = montoContrato - (totalEgresosCompletoCF + creditoFiscalReal);
+      updateField('utilidadRealConFactura', utilidadRealCF);
+      
+      // Balance de Utilidad = Utilidad Estimada Con Factura - Utilidad Real Con Factura
+      const balanceUtilidadCF = utilidadEstimadaCFCalculada - utilidadRealCF;
+      updateField('balanceUtilidadConFactura', balanceUtilidadCF);
+      
       // Actualizar también en projectData local para mostrar inmediatamente
       setProjectData(prev => ({
         ...prev,
         impuestoEstimadoDelProyecto: formatMoney(impuestoEstimado),
         creditoFiscalReal: formatMoney(creditoFiscalReal),
+        utilidadEstimadaConFactura: formatMoney(utilidadEstimadaCFCalculada),
+        utilidadRealConFactura: formatMoney(utilidadRealCF),
+        balanceUtilidadConFactura: formatMoney(balanceUtilidadCF),
         creditoFiscalEstimado: formatMoney(creditoFiscalEstimado),
         igvSunat: formatMoney(igvSunat),
         impuestoRealDelProyecto: formatMoney(impuestoReal)
@@ -1334,9 +1427,9 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
         igvSunat,
         creditoFiscalReal,
         impuestoEstimado,
-        totalContratosConFactura,
+        totalEgresosConFactura,
         '📊 Impuesto Estimado calculado': impuestoEstimado,
-        '📊 Total contratos con F': totalContratosConFactura
+        '📊 Total egresos con F': totalEgresosConFactura
       });
     }
   }, [
@@ -1348,39 +1441,73 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     updateField
   ]);
 
-  // 🧾 CALCULAR IMPUESTO ESTIMADO Y CRÉDITO FISCAL REAL cuando cambian contratos con F
-  // Crear una dependencia estable basada en los valores de contratoProvedYServ de categorías con F
-  const contratosConFacturaKey = useMemo(() => {
+  // 🧾 CALCULAR IMPUESTO ESTIMADO Y CRÉDITO FISCAL REAL cuando cambian egresos con F
+  // Crear una dependencia estable basada en los valores de registroEgresos de categorías con F
+  const egresosConFacturaKey = useMemo(() => {
     if (!projectData.categorias || projectData.categorias.length === 0) return '';
     return projectData.categorias
       .filter(cat => (cat?.tipo || '').toString().toUpperCase() === 'F')
-      .map(cat => `${cat.id}:${parseMonetary(cat.contratoProvedYServ || 0)}`)
+      .map(cat => `${cat.id}:${parseMonetary(cat.registroEgresos || 0)}`)
       .join('|');
   }, [projectData.categorias]);
 
   useEffect(() => {
     if (!projectData.categorias || projectData.categorias.length === 0) return;
     
-    // Calcular suma de contratos con F
-    const totalContratosConFactura = projectData.categorias.reduce((sum, cat) => {
+    // Calcular suma de egresos con F
+    const totalEgresosConFactura = projectData.categorias.reduce((sum, cat) => {
       const esTipoF = (cat?.tipo || '').toString().toUpperCase() === 'F';
       if (esTipoF) {
-        const monto = parseMonetary(cat.contratoProvedYServ || 0);
-        console.log(`   📌 Categoría con F: "${cat.nombre}" - Contrato: ${cat.contratoProvedYServ} → ${monto}`);
+        const monto = parseMonetary(cat.registroEgresos || 0);
+        console.log(`   📌 Categoría con F: "${cat.nombre}" - Registro Egresos: ${cat.registroEgresos} → ${monto}`);
         return sum + monto;
       }
       return sum;
     }, 0);
     
-    // Calcular valores
-    const creditoFiscalReal = totalContratosConFactura * 0.18 / 1.18;
-    const impuestoEstimado = totalContratosConFactura * 0.18 / 1.18;
+    // Calcular Crédito Fiscal Real = Suma de REGISTRO EGRESOS con F / 1.18 * 18%
+    const creditoFiscalReal = (totalEgresosConFactura / 1.18) * 0.18;
+    
+    // Calcular IGV - SUNAT 18%
+    const montoContrato = parseMonetary(projectData.montoContrato || 0);
+    const igvSunat = (montoContrato / 1.18) * 0.18;
+    
+    // Calcular Crédito Fiscal Estimado (suma de PRESUPUESTOS con F)
+    const nombresF = new Set([
+      'melamina y servicios',
+      'melamina high gloss',
+      'accesorios y ferretería',
+      'accesorios y ferreteria',
+      'puertas alu vidrios',
+      'puertas alu y vidrios',
+      'led y electricidad',
+      'granito y/o cuarzo',
+      'tercializacion 1 facturada',
+      'tercialización 1 facturada',
+      'tercializacion 2 facturada',
+      'tercialización 2 facturada'
+    ]);
+    const baseCredito = projectData.categorias.reduce((sum, cat) => {
+      const nombre = (cat?.nombre || '').toString().toLowerCase().trim();
+      const esTipoF = (cat?.tipo || '').toString().toUpperCase() === 'F';
+      const esListado = nombresF.has(nombre);
+      const califica = esTipoF || esListado;
+      const bruto = cat?.presupuestoDelProyecto ?? 0;
+      const valor = parseFloat(String(bruto).replace(/[^0-9.-]/g, '')) || 0;
+      return califica ? sum + valor : sum;
+    }, 0);
+    const creditoFiscalEstimado = (baseCredito / 1.18) * 0.18;
+    
+    // 🧾 Impuesto Estimado del Proyecto = IGV - SUNAT 18% - Crédito Fiscal Estimado
+    const impuestoEstimado = igvSunat - creditoFiscalEstimado;
     
     console.log('🧾 ===== RECÁLCULO IMPUESTO ESTIMADO Y CRÉDITO FISCAL REAL =====');
-    console.log(`   📊 Total contratos con factura (F): S/ ${totalContratosConFactura.toFixed(2)}`);
-    console.log(`   📐 Fórmula: ${totalContratosConFactura.toFixed(2)} × 0.18 / 1.18`);
+    console.log(`   📊 Total egresos con factura (F): S/ ${totalEgresosConFactura.toFixed(2)}`);
+    console.log(`   📐 Fórmula Crédito Fiscal Real: ${totalEgresosConFactura.toFixed(2)} / 1.18 × 18%`);
     console.log(`   💰 Crédito Fiscal Real: S/ ${creditoFiscalReal.toFixed(2)}`);
-    console.log(`   💰 Impuesto Estimado del Proyecto: S/ ${impuestoEstimado.toFixed(2)}`);
+    console.log(`   💰 IGV - SUNAT 18%: S/ ${igvSunat.toFixed(2)}`);
+    console.log(`   💰 Crédito Fiscal Estimado: S/ ${creditoFiscalEstimado.toFixed(2)}`);
+    console.log(`   💰 Impuesto Estimado del Proyecto: S/ ${impuestoEstimado.toFixed(2)} (IGV - Crédito Fiscal Estimado)`);
     console.log('🧾 ============================================================');
     
     // Actualizar en el servicio
@@ -1393,7 +1520,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       creditoFiscalReal: formatMoney(creditoFiscalReal),
       impuestoEstimadoDelProyecto: formatMoney(impuestoEstimado)
     }));
-  }, [contratosConFacturaKey, updateField]);
+  }, [egresosConFacturaKey, updateField, projectData.montoContrato, projectData.categorias]);
 
   // 📊 SINCRONIZAR TOTALES CON DATOS DEL SERVICIO
   useEffect(() => {
@@ -2231,25 +2358,26 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Utilidad Estimada Sin Factura</td>
                       <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
-                        <input 
-                          type="text" 
-                          className="w-full border-none outline-none text-xs px-1 py-0.5 text-left" 
-                          placeholder="S/0.00" 
-                          value={formatMoney(projectData.utilidadEstimadaSinFactura || 0)}
-                          onChange={(e) => handleUtilidadEstimadaSFChange(e.target.value)}
-                        />
+                        {formatMoney(parseMonetary(projectData.montoContrato || 0) - totalesCalculados.presupuesto) || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Utilidad Real Sin Factura</td>
                       <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
-                        {projectData.utilidadRealSinFactura || 'S/0.00'}
+                        {formatMoney(parseMonetary(projectData.montoContrato || 0) - totalesCalculados.egresos) || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Balance de Utilidad +/-</td>
                       <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
-                        {formatAbsMoney(projectData.balanceUtilidadSinFactura || 0)}
+                        {(() => {
+                          // Calcular directamente desde los totales para asegurar precisión
+                          const montoContrato = parseMonetary(projectData.montoContrato || 0);
+                          const utilidadEstimadaSF = montoContrato - totalesCalculados.presupuesto;
+                          const utilidadRealSF = montoContrato - totalesCalculados.egresos;
+                          const balanceUtilidad = utilidadEstimadaSF - utilidadRealSF;
+                          return formatAbsMoney(balanceUtilidad);
+                        })()}
                       </td>
                     </tr>
                     {/* Separador visual entre bloques */}
@@ -2259,25 +2387,108 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Utilidad Estimada Con Factura</td>
                       <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
-                        <input 
-                          type="text" 
-                          className="w-full border-none outline-none text-xs px-1 py-0.5 text-left" 
-                          placeholder="S/0.00" 
-                          value={formatMoney(projectData.utilidadEstimadaConFactura || 0)}
-                          onChange={(e) => handleUtilidadEstimadaCFChange(e.target.value)}
-                        />
+                        {(() => {
+                          // Utilidad Estimada Con Factura = Monto del Contrato - (Presupuesto Del Proyecto + Impuesto Estimado del Proyecto)
+                          const montoContrato = parseMonetary(projectData.montoContrato || 0);
+                          const presupuestoProyecto = totalesCalculados.presupuesto;
+                          
+                          // Calcular Impuesto Estimado del Proyecto directamente: IGV - SUNAT 18% - Crédito Fiscal Estimado
+                          const igvSunat = (montoContrato / 1.18) * 0.18;
+                          
+                          // Calcular Crédito Fiscal Estimado (suma de PRESUPUESTOS con F)
+                          const nombresF = new Set([
+                            'melamina y servicios', 'melamina high gloss', 'accesorios y ferretería', 'accesorios y ferreteria',
+                            'puertas alu vidrios', 'puertas alu y vidrios', 'led y electricidad', 'granito y/o cuarzo',
+                            'tercializacion 1 facturada', 'tercialización 1 facturada', 'tercializacion 2 facturada', 'tercialización 2 facturada'
+                          ]);
+                          const baseCredito = (projectData.categorias || []).reduce((sum, cat) => {
+                            const nombre = (cat?.nombre || '').toString().toLowerCase().trim();
+                            const esTipoF = (cat?.tipo || '').toString().toUpperCase() === 'F';
+                            const esListado = nombresF.has(nombre);
+                            const califica = esTipoF || esListado;
+                            const bruto = cat?.presupuestoDelProyecto ?? 0;
+                            const valor = parseFloat(String(bruto).replace(/[^0-9.-]/g, '')) || 0;
+                            return califica ? sum + valor : sum;
+                          }, 0);
+                          const creditoFiscalEstimado = (baseCredito / 1.18) * 0.18;
+                          
+                          // Impuesto Estimado del Proyecto = IGV - Crédito Fiscal Estimado
+                          const impuestoEstimado = igvSunat - creditoFiscalEstimado;
+                          
+                          const utilidadEstimadaCF = montoContrato - (presupuestoProyecto + impuestoEstimado);
+                          return formatMoney(utilidadEstimadaCF) || 'S/0.00';
+                        })()}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Utilidad Real Con Factura</td>
                       <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
-                        {projectData.utilidadRealConFactura || 'S/0.00'}
+                        {(() => {
+                          // Utilidad Real Con Factura = Monto del Contrato - (Total Registro de Egresos + Crédito Fiscal Real)
+                          const montoContrato = parseMonetary(projectData.montoContrato || 0);
+                          const totalEgresos = totalesCalculados.egresos;
+                          
+                          // Calcular Crédito Fiscal Real (suma de egresos con F)
+                          const totalEgresosConFactura = (projectData.categorias || []).reduce((sum, cat) => {
+                            const esTipoF = (cat?.tipo || '').toString().toUpperCase() === 'F';
+                            if (esTipoF) {
+                              return sum + parseMonetary(cat.registroEgresos || 0);
+                            }
+                            return sum;
+                          }, 0);
+                          const creditoFiscalReal = (totalEgresosConFactura / 1.18) * 0.18;
+                          
+                          const utilidadRealCF = montoContrato - (totalEgresos + creditoFiscalReal);
+                          return formatMoney(utilidadRealCF) || 'S/0.00';
+                        })()}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Balance de Utilidad</td>
                       <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
-                        {formatAbsMoney(projectData.balanceUtilidadConFactura || 0)}
+                        {(() => {
+                          // Balance de Utilidad = Utilidad Estimada Con Factura - Utilidad Real Con Factura
+                          const montoContrato = parseMonetary(projectData.montoContrato || 0);
+                          const presupuestoProyecto = totalesCalculados.presupuesto;
+                          
+                          // Calcular Impuesto Estimado del Proyecto
+                          const igvSunat = (montoContrato / 1.18) * 0.18;
+                          const nombresF = new Set([
+                            'melamina y servicios', 'melamina high gloss', 'accesorios y ferretería', 'accesorios y ferreteria',
+                            'puertas alu vidrios', 'puertas alu y vidrios', 'led y electricidad', 'granito y/o cuarzo',
+                            'tercializacion 1 facturada', 'tercialización 1 facturada', 'tercializacion 2 facturada', 'tercialización 2 facturada'
+                          ]);
+                          const baseCredito = (projectData.categorias || []).reduce((sum, cat) => {
+                            const nombre = (cat?.nombre || '').toString().toLowerCase().trim();
+                            const esTipoF = (cat?.tipo || '').toString().toUpperCase() === 'F';
+                            const esListado = nombresF.has(nombre);
+                            const califica = esTipoF || esListado;
+                            const bruto = cat?.presupuestoDelProyecto ?? 0;
+                            const valor = parseFloat(String(bruto).replace(/[^0-9.-]/g, '')) || 0;
+                            return califica ? sum + valor : sum;
+                          }, 0);
+                          const creditoFiscalEstimado = (baseCredito / 1.18) * 0.18;
+                          const impuestoEstimado = igvSunat - creditoFiscalEstimado;
+                          
+                          // Utilidad Estimada Con Factura
+                          const utilidadEstimadaCF = montoContrato - (presupuestoProyecto + impuestoEstimado);
+                          
+                          // Utilidad Real Con Factura
+                          const totalEgresos = totalesCalculados.egresos;
+                          const totalEgresosConFactura = (projectData.categorias || []).reduce((sum, cat) => {
+                            const esTipoF = (cat?.tipo || '').toString().toUpperCase() === 'F';
+                            if (esTipoF) {
+                              return sum + parseMonetary(cat.registroEgresos || 0);
+                            }
+                            return sum;
+                          }, 0);
+                          const creditoFiscalReal = (totalEgresosConFactura / 1.18) * 0.18;
+                          const utilidadRealCF = montoContrato - (totalEgresos + creditoFiscalReal);
+                          
+                          // Balance de Utilidad
+                          const balanceUtilidad = utilidadEstimadaCF - utilidadRealCF;
+                          return formatAbsMoney(balanceUtilidad);
+                        })()}
                       </td>
                     </tr>
                     {/* Separador visual entre bloques */}
@@ -2299,19 +2510,53 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Impuesto Estimado del Proyecto</td>
                       <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
-                        {projectData.impuestoEstimadoDelProyecto || 'S/0.00'}
+                        {(() => {
+                          const igvSunat = (parseMonetary(projectData.montoContrato || 0) / 1.18) * 0.18;
+                          const creditoFiscalEstimado = parseMonetary(projectData.creditoFiscalEstimado || 0);
+                          const impuestoEstimado = igvSunat - creditoFiscalEstimado;
+                          return formatMoney(impuestoEstimado) || 'S/0.00';
+                        })()}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Crédito Fiscal Real</td>
                       <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
-                        {projectData.creditoFiscalReal || 'S/0.00'}
+                        {(() => {
+                          // Suma de Registro Egresos con F (roja)
+                          const totalEgresosConFactura = (projectData.categorias || []).reduce((sum, cat) => {
+                            const esTipoF = (cat?.tipo || '').toString().toUpperCase() === 'F';
+                            if (esTipoF) {
+                              return sum + parseMonetary(cat.registroEgresos || 0);
+                            }
+                            return sum;
+                          }, 0);
+                          // Fórmula: Suma / 1.18 * 18%
+                          const creditoFiscalReal = (totalEgresosConFactura / 1.18) * 0.18;
+                          return formatMoney(creditoFiscalReal) || 'S/0.00';
+                        })()}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Impuesto Real del Proyecto</td>
                       <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
-                        {projectData.impuestoRealDelProyecto || 'S/0.00'}
+                        {(() => {
+                          // Impuesto Real del Proyecto = IGV - SUNAT 18% - Crédito Fiscal Real
+                          const montoContrato = parseMonetary(projectData.montoContrato || 0);
+                          const igvSunat = (montoContrato / 1.18) * 0.18;
+                          
+                          // Calcular Crédito Fiscal Real (suma de egresos con F)
+                          const totalEgresosConFactura = (projectData.categorias || []).reduce((sum, cat) => {
+                            const esTipoF = (cat?.tipo || '').toString().toUpperCase() === 'F';
+                            if (esTipoF) {
+                              return sum + parseMonetary(cat.registroEgresos || 0);
+                            }
+                            return sum;
+                          }, 0);
+                          const creditoFiscalReal = (totalEgresosConFactura / 1.18) * 0.18;
+                          
+                          const impuestoReal = igvSunat - creditoFiscalReal;
+                          return formatMoney(impuestoReal) || 'S/0.00';
+                        })()}
                       </td>
                     </tr>
                     {/* Separador visual entre bloques */}
@@ -2335,7 +2580,43 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                         Balance De Compras Del Proyecto
                       </td>
                       <td className="border border-gray-400 px-1 py-0.5 bg-white text-black font-bold text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1" style={{ borderTop: '4px solid #000' }}>
-                        {formatMoney(totalesHorizontales.presupuesto - totalesHorizontales.egresos) || 'S/0.00'}
+                        {(() => {
+                          // Balance De Compras Del Proyecto = (Suma de Presup. Del Proy. de categorías específicas + Suma de Contrato Prov. Y Serv. de categorías específicas) - Total Registro Egresos
+                          const categoriasPresupuesto = [
+                            'melamina y servicios', 'melamina high gloss', 'accesorios y ferretería', 'accesorios y ferreteria',
+                            'puertas alu y vidrios', 'puertas alu vidrios', 'led y electricidad', 'flete y/o camioneta',
+                            'logística operativa', 'logistica operativa', 'extras y/o eventos'
+                          ];
+                          
+                          const categoriasContrato = [
+                            'despecie', 'mano de obra', 'of - escp', 'of escp', 'granito y/o cuarzo', 'granito y/o cuarz',
+                            'extras y/o eventos gyc', 'extras y/o eventos g y c', 'tercializacion 1 facturada', 'tercialización 1 facturada',
+                            'extras y/o eventos terc. 1', 'extras y/o eventos tercializacion 1', 'tercializacion 2 facturada', 'tercialización 2 facturada',
+                            'extras y/o eventos terc. 2', 'extras y/o eventos tercializacion 2', 'tercializacion 1 no facturada', 'tercialización 1 no facturada',
+                            'extras y/o eventos terc. 1 nf', 'extras y/o eventos tercializacion 1 nf', 'tercializacion 2 no facturada', 'tercialización 2 no facturada'
+                          ];
+                          
+                          const sumaPresupuestoEspecifico = (projectData.categorias || []).reduce((sum, cat) => {
+                            const nombre = (cat?.nombre || '').toString().toLowerCase().trim();
+                            const incluir = categoriasPresupuesto.some(catName => nombre === catName || nombre.includes(catName));
+                            if (incluir) {
+                              return sum + parseMonetary(cat.presupuestoDelProyecto || 0);
+                            }
+                            return sum;
+                          }, 0);
+                          
+                          const sumaContratoEspecifico = (projectData.categorias || []).reduce((sum, cat) => {
+                            const nombre = (cat?.nombre || '').toString().toLowerCase().trim();
+                            const incluir = categoriasContrato.some(catName => nombre === catName || nombre.includes(catName));
+                            if (incluir) {
+                              return sum + parseMonetary(cat.contratoProvedYServ || 0);
+                            }
+                            return sum;
+                          }, 0);
+                          
+                          const balanceDeCompras = (sumaPresupuestoEspecifico + sumaContratoEspecifico) - totalesCalculados.egresos;
+                          return formatMoney(balanceDeCompras) || 'S/0.00';
+                        })()}
                       </td>
                     </tr>
                     {/* Separador visual - bloque inferior */}
@@ -2379,19 +2660,19 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Presupuesto Del Proyecto</td>
                       <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
-                        {formatMoney(totalesHorizontales.presupuesto) || 'S/0.00'}
+                        {formatMoney(totalesCalculados.presupuesto) || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Total de Egresos del Proyecto</td>
                       <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
-                        {formatMoney(totalesHorizontales.egresos) || 'S/0.00'}
+                        {formatMoney(totalesCalculados.egresos) || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-white text-black border border-gray-400 px-1 py-0.5 font-bold text-xs" style={{ borderBottom: '4px solid #000' }}>Balance Del Presupuesto</td>
                       <td className="border border-gray-400 px-1 py-0.5 bg-white text-black font-bold text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1" style={{ borderBottom: '4px solid #000' }}>
-                        {projectData.balanceDelPresupuesto || 'S/0.00'}
+                        {formatMoney(totalesCalculados.presupuesto - totalesCalculados.egresos) || 'S/0.00'}
                       </td>
                     </tr>
                   </tbody>
