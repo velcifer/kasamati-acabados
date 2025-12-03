@@ -154,6 +154,166 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     window.open(fileObj.url, '_blank');
   };
 
+  // Referencia para el área de impresión principal del proyecto
+  const printAreaRef = useRef(null);
+  
+  // Handler para generar PDF del proyecto completo (tabla de categorías + análisis financiero)
+  const handlePrintProyecto = () => {
+    // Buscar los dos cuadros principales directamente
+    const leftPanel = document.querySelector('.left-panel');
+    const rightPanel = document.querySelector('.right-panel');
+    
+    if (!leftPanel || !rightPanel) {
+      alert('Error: No se encontraron los cuadros para generar el PDF.');
+      console.error('Elementos no encontrados:', { leftPanel: !!leftPanel, rightPanel: !!rightPanel });
+      return;
+    }
+
+    // Cargar html2pdf.js desde CDN si no está disponible
+    const loadHtml2Pdf = () => {
+      return new Promise((resolve, reject) => {
+        if (window.html2pdf) {
+          resolve(window.html2pdf);
+          return;
+        }
+        
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+        script.onload = () => resolve(window.html2pdf);
+        script.onerror = reject;
+        document.head.appendChild(script);
+      });
+    };
+
+    loadHtml2Pdf().then((html2pdf) => {
+      // Clonar los dos cuadros principales
+      const cloneLeftPanel = leftPanel.cloneNode(true);
+      const cloneRightPanel = rightPanel.cloneNode(true);
+      
+      // Ocultar botones en ambos clones
+      [cloneLeftPanel, cloneRightPanel].forEach((clone) => {
+        const buttons = clone.querySelectorAll('button');
+        buttons.forEach((btn) => {
+          btn.style.display = 'none';
+        });
+        
+        // Ocultar inputs de edición y mostrar solo valores
+        const inputs = clone.querySelectorAll('input');
+        inputs.forEach((input) => {
+          if (input.type === 'text' && input.value) {
+            // Crear un span con el valor para mostrar en PDF
+            const span = document.createElement('span');
+            span.textContent = input.value;
+            span.className = input.className;
+            span.style.display = 'inline-block';
+            input.parentNode.replaceChild(span, input);
+          } else {
+            input.style.display = 'none';
+          }
+        });
+      });
+
+      // Crear un contenedor temporal para html2canvas
+      const printContainer = document.createElement('div');
+      printContainer.id = 'pdf-container';
+      printContainer.style.position = 'absolute';
+      printContainer.style.left = '-9999px';
+      printContainer.style.top = '0';
+      printContainer.style.width = '1200px';
+      printContainer.style.backgroundColor = '#ffffff';
+      printContainer.style.padding = '20px';
+      printContainer.style.display = 'flex';
+      printContainer.style.flexDirection = 'row';
+      printContainer.style.gap = '20px';
+      printContainer.style.alignItems = 'flex-start';
+      
+      // Aplicar estilos a los clones
+      cloneLeftPanel.style.display = 'block';
+      cloneLeftPanel.style.visibility = 'visible';
+      cloneLeftPanel.style.opacity = '1';
+      cloneLeftPanel.style.flexShrink = '0';
+      
+      cloneRightPanel.style.display = 'block';
+      cloneRightPanel.style.visibility = 'visible';
+      cloneRightPanel.style.opacity = '1';
+      cloneRightPanel.style.flexShrink = '0';
+      
+      printContainer.appendChild(cloneLeftPanel);
+      printContainer.appendChild(cloneRightPanel);
+      document.body.appendChild(printContainer);
+      
+      // Log para debugging
+      console.log('📄 Contenido preparado para PDF:', {
+        tieneLeftPanel: !!cloneLeftPanel,
+        tieneRightPanel: !!cloneRightPanel,
+        alturaContainer: printContainer.scrollHeight,
+        anchoContainer: printContainer.scrollWidth
+      });
+
+      // Esperar un momento para que se renderice y verificar que tenga contenido
+      setTimeout(() => {
+        // Verificar que el contenedor tenga contenido antes de generar el PDF
+        const hasTable = printContainer.querySelector('table');
+        const hasRightPanel = printContainer.querySelector('.right-panel');
+        
+        if (!hasTable || !hasRightPanel) {
+          alert('Error: No se pudo capturar el contenido completo. Por favor, intenta nuevamente.');
+          document.body.removeChild(printContainer);
+          return;
+        }
+        
+        // Asegurar que el contenedor tenga altura suficiente
+        const containerHeight = Math.max(printContainer.scrollHeight, 800);
+        printContainer.style.height = `${containerHeight}px`;
+        
+        const opt = {
+          margin: [10, 10, 10, 10],
+          filename: `Proyecto_${projectData.nombreProyecto || 'Proyecto'}_${new Date().toISOString().split('T')[0]}.pdf`,
+          image: { type: 'jpeg', quality: 0.98 },
+          html2canvas: { 
+            scale: 2, 
+            useCORS: true,
+            logging: true, // Habilitar logging para debugging
+            backgroundColor: '#ffffff',
+            allowTaint: false,
+            scrollX: 0,
+            scrollY: 0,
+            windowWidth: 1200,
+            windowHeight: containerHeight,
+            onclone: (clonedDoc) => {
+              // Asegurar que todos los elementos sean visibles en el documento clonado
+              const clonedContainer = clonedDoc.querySelector('#pdf-container') || clonedDoc.body.firstElementChild;
+              if (clonedContainer) {
+                clonedContainer.style.display = 'flex';
+                clonedContainer.style.flexDirection = 'row';
+                clonedContainer.style.visibility = 'visible';
+                clonedContainer.style.opacity = '1';
+              }
+            }
+          },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
+          pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+        };
+
+        html2pdf().set(opt).from(printContainer).save().then(() => {
+          // Limpiar el contenedor temporal
+          document.body.removeChild(printContainer);
+          console.log('✅ PDF del proyecto generado exitosamente');
+        }).catch((error) => {
+          console.error('❌ Error al generar PDF:', error);
+          alert('Error al generar el PDF: ' + error.message);
+          // Limpiar el contenedor temporal en caso de error
+          if (document.body.contains(printContainer)) {
+            document.body.removeChild(printContainer);
+          }
+        });
+      }, 1000); // Aumentar el tiempo de espera para asegurar que se renderice
+    }).catch((error) => {
+      console.error('❌ Error al cargar html2pdf.js:', error);
+      alert('Error al cargar la librería de PDF. Por favor, intenta nuevamente.');
+    });
+  };
+
   // Referencia y handler para imprimir SOLO el popup de Cobranzas
   const cobranzasPopupRef = useRef(null);
   const handlePrintCobranzas = () => {
@@ -984,28 +1144,37 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       const n = String(nombre || '').toLowerCase();
       if (!n) return 'text-black';
       
-      // Rojo: Despecie, Mano de Obra, Tercializacion Facturada
-      if (n.includes('despecie') || n.includes('despiece')) return 'text-red-600';
-      if (n.includes('mano de obra')) return 'text-red-600';
-      if (n.includes('tercializacion') && n.includes('facturada') && !n.includes('no')) return 'text-red-600';
+      // Naranja: Melamina y Servicios, Melamina High Gloss (ambas con el mismo color)
+      if (n.includes('melamina y servicios') || n === 'melamina y servicios') return 'text-orange-600';
+      if (n.includes('melamina high gloss') || n === 'melamina high gloss') return 'text-orange-600';
       
-      // Verde: Flete, Logística
-      if (n.includes('flete') || n.includes('logística') || n.includes('logistica')) return 'text-green-600';
-      
-      // Azul: Melamina, Accesorios, Puertas, Led
-      if (n.includes('melamina') || n.includes('accesorios') || n.includes('puertas') || n.includes('vidrios') || n.includes('led')) {
+      // Azul: Accesorios, Puertas, Led
+      if (n.includes('accesorios') || n.includes('puertas') || n.includes('vidrios') || n.includes('led')) {
         return 'text-blue-600';
       }
       
-      // Morado: Granito, Cuarzo
-      if (n.includes('granito') || n.includes('cuarzo')) return 'text-purple-600';
+      // Rojo: Despecie, Mano de Obra
+      if (n.includes('despecie') || n.includes('despiece')) return 'text-red-600';
+      if (n.includes('mano de obra')) return 'text-red-600';
+      
+      // Rojo: Granito Y/O Cuarzo, Extras Y/O Eventos GyC, Tercializacion Facturada (1 y 2), Extras Y/O Eventos Terc. 1 y 2
+      if (n.includes('granito') || n.includes('cuarzo')) return 'text-red-600';
+      if (n.includes('extras y/o eventos gyc') || n === 'extras y/o eventos gyc') return 'text-red-600';
+      if ((n.includes('tercializacion 1 facturada') || n === 'tercialización 1 facturada') && !n.includes('no')) return 'text-red-600';
+      if (n.includes('extras y/o eventos terc. 1') && !n.includes('nf')) return 'text-red-600';
+      if ((n.includes('tercializacion 2 facturada') || n === 'tercialización 2 facturada') && !n.includes('no')) return 'text-red-600';
+      if (n.includes('extras y/o eventos terc. 2') && !n.includes('nf')) return 'text-red-600';
+      
+      // Verde: Flete, Logística, Extras y/o Eventos (sin GyC ni Terc)
+      if (n.includes('flete') || n.includes('logística') || n.includes('logistica')) return 'text-green-600';
+      if (n.includes('extras y/o eventos') && !n.includes('gyc') && !n.includes('terc')) return 'text-green-600';
       
       // Gris: NO Facturada, NF
       if ((n.includes('tercializacion') || n.includes('extras')) && (n.includes('no facturada') || n.includes('nf'))) {
         return 'text-gray-500';
       }
       
-      // Negro: resto (OF - ESCP, Extras y/o Eventos)
+      // Negro: resto (OF - ESCP, etc.)
       return 'text-black';
     } catch {
       return 'text-black';
@@ -1217,7 +1386,8 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
         totalEgresosCompleto: totalesCalculadosTabla.egresos
       });
       
-      updateField('totalContratoProveedores', formatMoney(totalesCategoria.totalContrato));
+      // Total Contrato Proveedores = Total completo de "Contrato Prov. Y Serv." de la fila TOTALES (incluye todas las filas)
+      updateField('totalContratoProveedores', formatMoney(totalesCalculadosTabla.contrato));
       updateField('totalSaldoPorPagarProveedores', formatMoney(totalesCategoria.totalEgresos));
       // Presupuesto Del Proyecto = Total completo de Presup. Del Proy. de la fila TOTALES
       updateField('presupuestoProyecto', formatMoney(totalesCalculadosTabla.presupuesto));
@@ -1239,67 +1409,124 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       
       // 💰 COBRANZAS Y SALDOS
       // Usar totales horizontales (excluye filas marcadas) para los balances
-      updateField('saldoXCobrar', montoContrato - adelantos);
+      const saldoXCobrarCalculado = montoContrato - adelantos;
+      console.log(`💰 ProyectoDetalle: Calculando saldoXCobrar:`, {
+        montoContrato: montoContrato,
+        adelantos: adelantos,
+        calculado: saldoXCobrarCalculado,
+        proyectoId: projectNumber,
+        proyectoNombre: projectData.nombreProyecto
+      });
+      updateField('saldoXCobrar', saldoXCobrarCalculado);
       // Balance De Compras Del Proyecto = (Suma de Presup. Del Proy. de categorías específicas + Suma de Contrato Prov. Y Serv. de categorías específicas) - Total Registro Egresos
+      // Usar los nombres exactos como aparecen en el código (normalizados a minúsculas para comparación)
       const categoriasPresupuesto = [
         'melamina y servicios',
         'melamina high gloss',
         'accesorios y ferretería',
-        'accesorios y ferreteria',
-        'puertas alu y vidrios',
         'puertas alu vidrios',
         'led y electricidad',
         'flete y/o camioneta',
         'logística operativa',
-        'logistica operativa',
         'extras y/o eventos'
       ];
       
       const categoriasContrato = [
         'despecie',
-        'mano de obra',
+        'mano de obra', // Se suman todas las instancias de "Mano de Obra"
         'of - escp',
-        'of escp',
         'granito y/o cuarzo',
-        'granito y/o cuarz',
         'extras y/o eventos gyc',
-        'extras y/o eventos g y c',
         'tercializacion 1 facturada',
-        'tercialización 1 facturada',
         'extras y/o eventos terc. 1',
-        'extras y/o eventos tercializacion 1',
         'tercializacion 2 facturada',
-        'tercialización 2 facturada',
         'extras y/o eventos terc. 2',
-        'extras y/o eventos tercializacion 2',
         'tercializacion 1 no facturada',
-        'tercialización 1 no facturada',
         'extras y/o eventos terc. 1 nf',
-        'extras y/o eventos tercializacion 1 nf',
         'tercializacion 2 no facturada',
-        'tercialización 2 no facturada'
+        'extras y/o eventos terc. 2 nf'
       ];
       
       const sumaPresupuestoEspecifico = (projectData.categorias || []).reduce((sum, cat) => {
-        const nombre = (cat?.nombre || '').toString().toLowerCase().trim();
-        const incluir = categoriasPresupuesto.some(catName => nombre === catName || nombre.includes(catName));
+        const nombreOriginal = (cat?.nombre || '').toString();
+        const nombre = nombreOriginal.toLowerCase().trim().replace(/\s+/g, ' ');
+        // Comparación estricta: solo coincidencia exacta (sin espacios extra, sin variaciones)
+        const incluir = categoriasPresupuesto.some(catName => {
+          const nombreCat = catName.toLowerCase().trim().replace(/\s+/g, ' ');
+          // Solo coincidencia exacta
+          const coincide = nombre === nombreCat;
+          if (coincide) {
+            console.log(`   ✅ MATCH Presupuesto: "${nombreOriginal}" === "${catName}"`);
+          }
+          return coincide;
+        });
         if (incluir) {
-          return sum + parseMonetary(cat.presupuestoDelProyecto || 0);
+          const valor = parseMonetary(cat.presupuestoDelProyecto || 0);
+          console.log(`   ✅ Presupuesto incluido: "${nombreOriginal}" = S/${valor.toFixed(2)}`);
+          return sum + valor;
+        } else {
+          // Log para debugging: mostrar qué categorías NO se están incluyendo
+          const nombreNormalizado = nombre;
+          const enLista = categoriasPresupuesto.some(catName => {
+            const nombreCat = catName.toLowerCase().trim().replace(/\s+/g, ' ');
+            return nombreNormalizado === nombreCat;
+          });
+          if (!enLista && parseMonetary(cat.presupuestoDelProyecto || 0) > 0) {
+            console.log(`   ❌ Presupuesto NO incluido (valor > 0): "${nombreOriginal}" (normalizado: "${nombreNormalizado}")`);
+          }
         }
         return sum;
       }, 0);
       
       const sumaContratoEspecifico = (projectData.categorias || []).reduce((sum, cat) => {
-        const nombre = (cat?.nombre || '').toString().toLowerCase().trim();
-        const incluir = categoriasContrato.some(catName => nombre === catName || nombre.includes(catName));
+        const nombreOriginal = (cat?.nombre || '').toString();
+        const nombre = nombreOriginal.toLowerCase().trim().replace(/\s+/g, ' ');
+        // Comparación estricta: solo coincidencia exacta
+        const incluir = categoriasContrato.some(catName => {
+          const nombreCat = catName.toLowerCase().trim().replace(/\s+/g, ' ');
+          // Solo coincidencia exacta
+          const coincide = nombre === nombreCat;
+          if (coincide) {
+            console.log(`   ✅ MATCH Contrato: "${nombreOriginal}" === "${catName}"`);
+          }
+          return coincide;
+        });
         if (incluir) {
-          return sum + parseMonetary(cat.contratoProvedYServ || 0);
+          const valor = parseMonetary(cat.contratoProvedYServ || 0);
+          console.log(`   ✅ Contrato incluido: "${nombreOriginal}" = S/${valor.toFixed(2)}`);
+          return sum + valor;
+        } else {
+          // Log para debugging: mostrar qué categorías NO se están incluyendo
+          const nombreNormalizado = nombre;
+          const enLista = categoriasContrato.some(catName => {
+            const nombreCat = catName.toLowerCase().trim().replace(/\s+/g, ' ');
+            return nombreNormalizado === nombreCat;
+          });
+          if (!enLista && parseMonetary(cat.contratoProvedYServ || 0) > 0) {
+            console.log(`   ❌ Contrato NO incluido (valor > 0): "${nombreOriginal}" (normalizado: "${nombreNormalizado}")`);
+          }
         }
         return sum;
       }, 0);
       
-      const balanceDeCompras = (sumaPresupuestoEspecifico + sumaContratoEspecifico) - totalesCalculadosTabla.egresos;
-      updateField('balanceDeComprasDelProyecto', balanceDeCompras);
+      console.log('🧮 ===== CÁLCULO BALANCE DE COMPRAS DEL PROYECTO =====');
+      console.log(`   📊 Suma Presupuesto Específico: S/${sumaPresupuestoEspecifico.toFixed(2)}`);
+      console.log(`   📊 Suma Contrato Específico: S/${sumaContratoEspecifico.toFixed(2)}`);
+      console.log(`   📊 Total Registro Egresos: S/${totalesCalculadosTabla.egresos.toFixed(2)}`);
+      console.log(`   💰 Suma Total (Presup + Contrato): S/${(sumaPresupuestoEspecifico + sumaContratoEspecifico).toFixed(2)}`);
+      console.log(`   💰 Balance De Compras: S/${(sumaPresupuestoEspecifico + sumaContratoEspecifico - totalesCalculadosTabla.egresos).toFixed(2)}`);
+      console.log('🧮 ===== LISTA DE CATEGORÍAS EN EL PROYECTO =====');
+      (projectData.categorias || []).forEach((cat, idx) => {
+        const nombre = (cat?.nombre || '').toString();
+        const presup = parseMonetary(cat.presupuestoDelProyecto || 0);
+        const contrato = parseMonetary(cat.contratoProvedYServ || 0);
+        const egresos = parseMonetary(cat.registroEgresos || 0);
+        console.log(`   ${idx + 1}. "${nombre}" - Presup: S/${presup.toFixed(2)}, Contrato: S/${contrato.toFixed(2)}, Egresos: S/${egresos.toFixed(2)}`);
+      });
+      console.log('🧮 ===================================================');
+      
+      const balanceDeComprasCalculado = (sumaPresupuestoEspecifico + sumaContratoEspecifico) - totalesCalculadosTabla.egresos;
+      updateField('balanceDeComprasDelProyecto', balanceDeComprasCalculado);
       // Balance Del Presupuesto = Presupuesto Del Proyecto - Total de Egresos del Proyecto
       const balanceDelPresupuestoCalculado = totalesCalculadosTabla.presupuesto - totalesCalculadosTabla.egresos;
       updateField('balanceDelPresupuesto', balanceDelPresupuestoCalculado);
@@ -1317,7 +1544,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
         totalSaldoPorPagarProveedores: formatMoney(totalesCategoria.totalEgresos),
         presupuestoProyecto: formatMoney(totalesCalculadosTabla.presupuesto),
         totalEgresosProyecto: formatMoney(totalesCalculadosTabla.egresos),
-        balanceDeComprasDelProyecto: formatMoney(balanceDeCompras),
+        balanceDeComprasDelProyecto: formatMoney(balanceDeComprasCalculado),
         balanceDelPresupuesto: formatMoney(totalesCalculadosTabla.presupuesto - totalesCalculadosTabla.egresos),
         utilidadRealSinFactura: formatMoney(utilidadRealSF),
         balanceUtilidadSinFactura: formatMoney(balanceUtilidadSF)
@@ -2042,9 +2269,9 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
               ← Volver
             </button>
             <button
-          onClick={() => window.print()}
+          onClick={handlePrintProyecto}
           className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-green-600 text-white text-xs font-semibold shadow hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-400 no-print"
-          title="Generar PDF (usa Guardar como PDF)"
+          title="Generar PDF del proyecto completo"
             >
           Generar PDF
             </button>
@@ -2282,7 +2509,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                   </div>
                   </td>
                   <td className={`border border-gray-400 px-1 py-0 text-center align-middle ${shouldHaveGrayBackground(categoria.nombre) ? 'bg-gray-300' : 'bg-white'}`} style={{width: '80px', minWidth: '80px', maxWidth: '80px'}}>
-                    <span className="text-[9px] text-red-600 font-semibold leading-tight">
+                    <span className="text-[9px] text-red-600 font-bold leading-tight">
                       {(() => {
                         // Verificar qué fórmula usar según el tipo de fila
                         // IMPORTANTE: Las filas marcadas en rojo SIEMPRE usan Contrato Prov. Y Serv., nunca Presup. Del Proy.
@@ -2329,7 +2556,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                 <td className="border border-gray-400 px-1 py-0.5 text-center text-[9px] bg-red-600 font-bold" style={{width: '100px', minWidth: '100px', maxWidth: '100px'}}>
                   {formatMoney(totalesCalculados.egresos)}
                 </td>
-                <td className="border border-gray-400 px-1 py-0.5 text-center text-[9px] bg-gray-600" style={{width: '80px', minWidth: '80px', maxWidth: '80px'}}>
+                <td className="border border-gray-400 px-1 py-0.5 text-center text-[9px] bg-gray-600 font-bold" style={{width: '80px', minWidth: '80px', maxWidth: '80px'}}>
                   {formatMoney(totalesCalculados.saldos)}
                 </td>
               </tr>
@@ -2357,19 +2584,19 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                   <tbody>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Utilidad Estimada Sin Factura</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
                         {formatMoney(parseMonetary(projectData.montoContrato || 0) - totalesCalculados.presupuesto) || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Utilidad Real Sin Factura</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
                         {formatMoney(parseMonetary(projectData.montoContrato || 0) - totalesCalculados.egresos) || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Balance de Utilidad +/-</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
                         {(() => {
                           // Calcular directamente desde los totales para asegurar precisión
                           const montoContrato = parseMonetary(projectData.montoContrato || 0);
@@ -2386,7 +2613,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Utilidad Estimada Con Factura</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
                         {(() => {
                           // Utilidad Estimada Con Factura = Monto del Contrato - (Presupuesto Del Proyecto + Impuesto Estimado del Proyecto)
                           const montoContrato = parseMonetary(projectData.montoContrato || 0);
@@ -2422,7 +2649,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Utilidad Real Con Factura</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
                         {(() => {
                           // Utilidad Real Con Factura = Monto del Contrato - (Total Registro de Egresos + Crédito Fiscal Real)
                           const montoContrato = parseMonetary(projectData.montoContrato || 0);
@@ -2445,7 +2672,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Balance de Utilidad</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
                         {(() => {
                           // Balance de Utilidad = Utilidad Estimada Con Factura - Utilidad Real Con Factura
                           const montoContrato = parseMonetary(projectData.montoContrato || 0);
@@ -2497,19 +2724,19 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">IGV - SUNAT 18%</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
                         {projectData.igvSunat || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Crédito Fiscal Estimado</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
                         {projectData.creditoFiscalEstimado || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Impuesto Estimado del Proyecto</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
                         {(() => {
                           const igvSunat = (parseMonetary(projectData.montoContrato || 0) / 1.18) * 0.18;
                           const creditoFiscalEstimado = parseMonetary(projectData.creditoFiscalEstimado || 0);
@@ -2520,7 +2747,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Crédito Fiscal Real</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
                         {(() => {
                           // Suma de Registro Egresos con F (roja)
                           const totalEgresosConFactura = (projectData.categorias || []).reduce((sum, cat) => {
@@ -2538,7 +2765,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Impuesto Real del Proyecto</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
                         {(() => {
                           // Impuesto Real del Proyecto = IGV - SUNAT 18% - Crédito Fiscal Real
                           const montoContrato = parseMonetary(projectData.montoContrato || 0);
@@ -2565,13 +2792,13 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Total Contrato Proveedores</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
                         {formatMoney(totalesCalculados.contrato) || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Total Saldo Por Pagar Proveedores</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
                         {projectData.totalSaldoPorPagarProveedores || 'S/0.00'}
                       </td>
                     </tr>
@@ -2579,26 +2806,46 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                       <td className="bg-white text-black border border-gray-400 px-1 py-0.5 font-bold text-xs" style={{ borderTop: '4px solid #000' }}>
                         Balance De Compras Del Proyecto
                       </td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-black font-bold text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1" style={{ borderTop: '4px solid #000' }}>
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-gray-900 font-bold text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1" style={{ borderTop: '4px solid #000' }}>
                         {(() => {
                           // Balance De Compras Del Proyecto = (Suma de Presup. Del Proy. de categorías específicas + Suma de Contrato Prov. Y Serv. de categorías específicas) - Total Registro Egresos
+                          // Usar los nombres exactos como aparecen en el código (normalizados a minúsculas para comparación)
                           const categoriasPresupuesto = [
-                            'melamina y servicios', 'melamina high gloss', 'accesorios y ferretería', 'accesorios y ferreteria',
-                            'puertas alu y vidrios', 'puertas alu vidrios', 'led y electricidad', 'flete y/o camioneta',
-                            'logística operativa', 'logistica operativa', 'extras y/o eventos'
+                            'melamina y servicios',
+                            'melamina high gloss',
+                            'accesorios y ferretería',
+                            'puertas alu vidrios',
+                            'led y electricidad',
+                            'flete y/o camioneta',
+                            'logística operativa',
+                            'extras y/o eventos'
                           ];
                           
                           const categoriasContrato = [
-                            'despecie', 'mano de obra', 'of - escp', 'of escp', 'granito y/o cuarzo', 'granito y/o cuarz',
-                            'extras y/o eventos gyc', 'extras y/o eventos g y c', 'tercializacion 1 facturada', 'tercialización 1 facturada',
-                            'extras y/o eventos terc. 1', 'extras y/o eventos tercializacion 1', 'tercializacion 2 facturada', 'tercialización 2 facturada',
-                            'extras y/o eventos terc. 2', 'extras y/o eventos tercializacion 2', 'tercializacion 1 no facturada', 'tercialización 1 no facturada',
-                            'extras y/o eventos terc. 1 nf', 'extras y/o eventos tercializacion 1 nf', 'tercializacion 2 no facturada', 'tercialización 2 no facturada'
+                            'despecie',
+                            'mano de obra', // Se suman todas las instancias de "Mano de Obra"
+                            'of - escp',
+                            'granito y/o cuarzo',
+                            'extras y/o eventos gyc',
+                            'tercializacion 1 facturada',
+                            'extras y/o eventos terc. 1',
+                            'tercializacion 2 facturada',
+                            'extras y/o eventos terc. 2',
+                            'tercializacion 1 no facturada',
+                            'extras y/o eventos terc. 1 nf',
+                            'tercializacion 2 no facturada',
+                            'extras y/o eventos terc. 2 nf'
                           ];
                           
                           const sumaPresupuestoEspecifico = (projectData.categorias || []).reduce((sum, cat) => {
-                            const nombre = (cat?.nombre || '').toString().toLowerCase().trim();
-                            const incluir = categoriasPresupuesto.some(catName => nombre === catName || nombre.includes(catName));
+                            const nombreOriginal = (cat?.nombre || '').toString();
+                            const nombre = nombreOriginal.toLowerCase().trim().replace(/\s+/g, ' ');
+                            // Comparación estricta: solo coincidencia exacta (igual que en useEffect)
+                            const incluir = categoriasPresupuesto.some(catName => {
+                              const nombreCat = catName.toLowerCase().trim().replace(/\s+/g, ' ');
+                              // Solo coincidencia exacta
+                              return nombre === nombreCat;
+                            });
                             if (incluir) {
                               return sum + parseMonetary(cat.presupuestoDelProyecto || 0);
                             }
@@ -2606,15 +2853,33 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                           }, 0);
                           
                           const sumaContratoEspecifico = (projectData.categorias || []).reduce((sum, cat) => {
-                            const nombre = (cat?.nombre || '').toString().toLowerCase().trim();
-                            const incluir = categoriasContrato.some(catName => nombre === catName || nombre.includes(catName));
+                            const nombreOriginal = (cat?.nombre || '').toString();
+                            const nombre = nombreOriginal.toLowerCase().trim().replace(/\s+/g, ' ');
+                            // Comparación estricta: solo coincidencia exacta (igual que en useEffect)
+                            const incluir = categoriasContrato.some(catName => {
+                              const nombreCat = catName.toLowerCase().trim().replace(/\s+/g, ' ');
+                              // Solo coincidencia exacta
+                              return nombre === nombreCat;
+                            });
                             if (incluir) {
                               return sum + parseMonetary(cat.contratoProvedYServ || 0);
                             }
                             return sum;
                           }, 0);
                           
+                          // Usar totalesCalculados.egresos que es el total completo de la tabla (igual que totalesCalculadosTabla.egresos)
                           const balanceDeCompras = (sumaPresupuestoEspecifico + sumaContratoEspecifico) - totalesCalculados.egresos;
+                          
+                          // Log para debugging (solo en desarrollo)
+                          if (process.env.NODE_ENV === 'development') {
+                            console.log('🔍 RENDERIZADO - Balance De Compras:', {
+                              sumaPresupuesto: sumaPresupuestoEspecifico,
+                              sumaContrato: sumaContratoEspecifico,
+                              totalEgresos: totalesCalculados.egresos,
+                              balance: balanceDeCompras
+                            });
+                          }
+                          
                           return formatMoney(balanceDeCompras) || 'S/0.00';
                         })()}
                       </td>
@@ -2628,7 +2893,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                       <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
                         <input 
                           type="text" 
-                          className="w-full border-none outline-none text-xs px-1 py-0.5 text-left" 
+                          className="w-full border-none outline-none text-xs px-1 py-0.5 text-left font-bold text-gray-900" 
                           placeholder="S/0.00" 
                           value={formatMoney(projectData.montoContrato || 0)}
                           onChange={(e) => handleMontoContratoChange(e.target.value)}
@@ -2640,7 +2905,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                       <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
                         <input 
                           type="text" 
-                          className="w-full border-none outline-none text-xs px-1 py-0.5 text-left" 
+                          className="w-full border-none outline-none text-xs px-1 py-0.5 text-left font-bold text-gray-900" 
                           placeholder="S/0.00" 
                           value={formatMoney(projectData.adelantos || 0)}
                           onChange={(e) => handleAdelantosChange(e.target.value)}
@@ -2649,7 +2914,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Saldo Por Cobrar</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
                         {projectData.saldoXCobrar || 'S/0.00'}
                       </td>
                     </tr>
@@ -2659,13 +2924,13 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Presupuesto Del Proyecto</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
                         {formatMoney(totalesCalculados.presupuesto) || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Total de Egresos del Proyecto</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
                         {formatMoney(totalesCalculados.egresos) || 'S/0.00'}
                       </td>
                     </tr>

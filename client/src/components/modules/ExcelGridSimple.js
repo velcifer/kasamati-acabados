@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+// import projectDataService from '../../services/projectDataService';
 import { useNavigate } from 'react-router-dom';
 import { 
   ArrowLeftIcon, 
@@ -11,6 +12,7 @@ import {
 import ProyectoDetalle from './ProyectoDetalle';
 import dataService from '../../services/dataService';
 import { useExcelGrid } from '../../hooks/useProjectData';
+import projectDataService from '../../services/projectDataService';
 
 const ExcelGridSimple = () => {
   const navigate = useNavigate();
@@ -121,21 +123,53 @@ const ExcelGridSimple = () => {
     tipoProyecto: ''
   });
   
-  // 🔄 Cargar datos iniciales (sin limpieza agresiva que recarga)
-  useEffect(() => {
-    // Los datos se cargan automáticamente con useExcelGrid
-    // El filtro en useMemo ya se encarga de eliminar filas corruptas sin recargar
-    setLoading(false);
-    setSyncMessage('✅ Datos sincronizados automáticamente');
-    setTimeout(() => setSyncMessage(''), 2000);
-  }, []);
 
   const loadProjectsData = async () => {
     try {
       setLoading(true);
       setSyncMessage('Cargando proyectos...');
       
-      const result = await dataService.getAllProjects();
+      // 🔄 LEER DESDE projectDataService (misma fuente que ProyectoDetalle) para sincronización automática
+      // También intentar desde dataService como fallback
+      let result;
+      let projectsFromService = projectDataService.getAllProjects();
+      
+      if (projectsFromService && Object.keys(projectsFromService).length > 0) {
+        // Convertir proyectos de projectDataService al formato esperado
+        const projectsArray = Object.values(projectsFromService).map((project, index) => ({
+          id: project.id || index + 1,
+          numero_proyecto: project.id || index + 1,
+          nombre_proyecto: project.nombreProyecto,
+          nombre_cliente: project.nombreCliente,
+          estado_proyecto: project.estadoProyecto || project.estado,
+          tipo_proyecto: project.tipoProyecto || project.tipo,
+          monto_contrato: project.montoContrato,
+          presupuesto_proyecto: project.presupuestoProyecto,
+          balance_del_presupuesto: project.balanceDelPresupuesto,
+          balance_proyecto: project.balanceProyecto,
+          utilidad_estimada_sin_factura: project.utilidadEstimadaSinFactura,
+          utilidad_real_sin_factura: project.utilidadRealSinFactura,
+          utilidad_estimada_facturado: project.utilidadEstimadaConFactura,
+          utilidad_real_facturado: project.utilidadRealConFactura, // Utilidad Real Con Factura desde ProyectoDetalle
+          total_contrato_proveedores: project.totalContratoProveedores,
+          saldo_pagar_proveedores: project.totalSaldoPorPagarProveedores,
+          adelantos_cliente: project.adelantos,
+          saldos_cobrar_proyecto: project.saldoXCobrar,
+          credito_fiscal_estimado: project.creditoFiscalEstimado,
+          credito_fiscal: project.creditoFiscal,
+          credito_fiscal_real: project.creditoFiscalReal,
+          impuesto_real_del_proyecto: project.impuestoRealDelProyecto,
+          impuestoRealDelProyecto: project.impuestoRealDelProyecto
+        }));
+        
+        result = { success: true, data: projectsArray, source: 'projectDataService' };
+        console.log('📊 Datos cargados desde projectDataService:', projectsArray.length, 'proyectos');
+      } else {
+        // Fallback a dataService si projectDataService está vacío
+        result = await dataService.getAllProjects();
+        console.log('📊 Datos cargados desde dataService (fallback)');
+      }
+      
       const connectionStatus = dataService.getConnectionStatus();
       
       if (result.success) {
@@ -157,12 +191,14 @@ const ExcelGridSimple = () => {
         // 🔄 PASO 2: Convertir a formato objeto con índices SECUENCIALES
         // Función helper para formatear valores monetarios con separadores de miles y dos decimales
         const formatMonetaryValue = (value) => {
-          if (!value && value !== 0) return '';
+          // Si es undefined, null o vacío, tratar como 0 para consistencia con Excel
+          if (value === undefined || value === null || value === '') return 'S/ 0.00';
+          
           if (typeof value === 'string') {
             // Si ya tiene formato S/ o $/, extraer el número
             const cleaned = value.replace(/[S$\/,\s]/g, '');
             const num = parseFloat(cleaned);
-            if (isNaN(num)) return value; // Si no es un número válido, devolver el valor original
+            if (isNaN(num)) return 'S/ 0.00'; // Si no es un número válido, devolver 0.00
             // Formatear con separadores de miles y dos decimales
             return `S/${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
           }
@@ -170,13 +206,34 @@ const ExcelGridSimple = () => {
             // Formatear con separadores de miles y dos decimales
             return `S/${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
           }
-          return value;
+          return 'S/ 0.00';
         };
         
         const projectsObject = {};
         let rowIndex = 1; // Empezar desde 1
         
         sortedProjects.forEach(project => {
+          // 🔍 DEBUG: Log completo del proyecto antes de procesar - ENFOCADO EN LAS CELDAS CLAVE
+          console.log(`🔍 PROYECTO COMPLETO - CELDAS CLAVE:`, {
+            nombre: project.nombre_proyecto || project.nombreProyecto,
+            id: project.id,
+            numero_proyecto: project.numero_proyecto,
+            // CELDA 1: Balance
+            balance_del_presupuesto: project.balance_del_presupuesto,
+            balanceDelPresupuesto: project.balanceDelPresupuesto,
+            // CELDA 2: Total Prov.
+            total_contrato_proveedores: project.total_contrato_proveedores,
+            totalContratoProveedores: project.totalContratoProveedores,
+            // CELDA 3: Créd. Fiscal
+            credito_fiscal_estimado: project.credito_fiscal_estimado,
+            creditoFiscalEstimado: project.creditoFiscalEstimado,
+            // CELDA 4: X Cobrar
+            saldos_cobrar_proyecto: project.saldos_cobrar_proyecto,
+            saldoXCobrar: project.saldoXCobrar,
+            saldosCobrarProyecto: project.saldosCobrarProyecto,
+            todasLasKeys: Object.keys(project)
+          });
+          
           projectsObject[rowIndex] = {
             // ID del proyecto para referencias
             numeroProyecto: project.numero_proyecto || project.id,
@@ -190,17 +247,243 @@ const ExcelGridSimple = () => {
             // Formatear todos los valores monetarios con dos decimales
             montoContrato: formatMonetaryValue(project.monto_contrato || project.montoContrato),
             presupuestoProyecto: formatMonetaryValue(project.presupuesto_proyecto || project.presupuestoProyecto),
-            balanceProyecto: formatMonetaryValue(project.balance_proyecto || project.balanceProyecto),
+            balanceProyecto: (() => {
+              // Leer el valor de balanceDelPresupuesto del proyecto (ya calculado correctamente desde ProyectoDetalle)
+              // Priorizar balance_del_presupuesto que viene del mapeo desde projectDataService (línea 147)
+              let valor = null;
+              let fuente = '';
+              
+              // Primero intentar desde balance_del_presupuesto (viene del mapeo en línea 147)
+              if (project.balance_del_presupuesto !== undefined && project.balance_del_presupuesto !== null) {
+                valor = project.balance_del_presupuesto;
+                fuente = 'balance_del_presupuesto (mapeado)';
+              } 
+              // Luego intentar desde balanceDelPresupuesto (campo directo del proyecto)
+              else if (project.balanceDelPresupuesto !== undefined && project.balanceDelPresupuesto !== null) {
+                valor = project.balanceDelPresupuesto;
+                fuente = 'balanceDelPresupuesto (directo)';
+              }
+              
+              // Si encontramos un valor (incluyendo 0), formatearlo y mostrarlo
+              if (valor !== null && valor !== undefined) {
+                // Convertir a número si es string, permitiendo el valor 0
+                const valorNumerico = typeof valor === 'string' ? parseFloat(valor.toString().replace(/[^0-9.-]/g, '')) : valor;
+                
+                // Verificar si es un número válido (incluyendo 0)
+                if (!isNaN(valorNumerico)) {
+                  const valorFormateado = formatMonetaryValue(valorNumerico);
+                  console.log(`✅ Balance Del Presupuesto leído CORRECTAMENTE:`, {
+                    proyecto: project.nombre_proyecto || project.nombreProyecto,
+                    valorOriginal: valor,
+                    valorNumerico: valorNumerico,
+                    tipo: typeof valor,
+                    valorFormateado: valorFormateado,
+                    fuente: fuente,
+                    rowIndex: rowIndex
+                  });
+                  return valorFormateado;
+                }
+              }
+              
+              // Si no hay valor, retornar 0 formateado
+              console.warn(`❌ Balance Del Presupuesto NO encontrado para proyecto:`, {
+                proyecto: project.nombre_proyecto || project.nombreProyecto,
+                balance_del_presupuesto: project.balance_del_presupuesto,
+                tipo_balance_del_presupuesto: typeof project.balance_del_presupuesto,
+                balanceDelPresupuesto: project.balanceDelPresupuesto,
+                tipo_balanceDelPresupuesto: typeof project.balanceDelPresupuesto,
+                balance_proyecto: project.balance_proyecto,
+                balanceProyecto: project.balanceProyecto,
+                rowIndex: rowIndex,
+                todasLasKeysBalance: Object.keys(project).filter(k => k.toLowerCase().includes('balance'))
+              });
+              
+              // Si no hay valor, retornar 0.00 (mostrar valor inicial)
+              return formatMonetaryValue(0);
+            })(),
             utilidadEstimadaSinFactura: formatMonetaryValue(project.utilidad_estimada_sin_factura || project.utilidadEstimadaSinFactura),
             utilidadRealSinFactura: formatMonetaryValue(project.utilidad_real_sin_factura || project.utilidadRealSinFactura),
             utilidadEstimadaFacturado: formatMonetaryValue(project.utilidad_estimada_facturado || project.utilidadEstimadaFacturado),
-            utilidadRealFacturado: formatMonetaryValue(project.utilidad_real_facturado || project.utilidadRealFacturado),
-            totalContratoProveedores: formatMonetaryValue(project.total_contrato_proveedores || project.totalContratoProveedores),
+            utilidadRealFacturado: (() => {
+              // Util. Real F = Utilidad Real Con Factura (desde ProyectoDetalle)
+              const valor = project.utilidad_real_facturado !== undefined ? project.utilidad_real_facturado : 
+                           project.utilidadRealConFactura !== undefined ? project.utilidadRealConFactura :
+                           project.utilidadRealFacturado !== undefined ? project.utilidadRealFacturado : null;
+              
+              if (valor !== null && valor !== undefined && valor !== '') {
+                const valorFormateado = formatMonetaryValue(valor);
+                console.log(`✅ Utilidad Real Con Factura leída CORRECTAMENTE:`, {
+                  proyecto: project.nombre_proyecto || project.nombreProyecto,
+                  valorOriginal: valor,
+                  tipo: typeof valor,
+                  valorFormateado: valorFormateado,
+                  fuente: project.utilidad_real_facturado !== undefined ? 'utilidad_real_facturado (mapeado)' :
+                         project.utilidadRealConFactura !== undefined ? 'utilidadRealConFactura (directo)' :
+                         'utilidadRealFacturado (legacy)',
+                  rowIndex: rowIndex
+                });
+                return valorFormateado;
+              }
+              console.warn(`❌ Utilidad Real Con Factura NO encontrada para proyecto:`, {
+                proyecto: project.nombre_proyecto || project.nombreProyecto,
+                utilidad_real_facturado: project.utilidad_real_facturado,
+                utilidadRealConFactura: project.utilidadRealConFactura,
+                utilidadRealFacturado: project.utilidadRealFacturado,
+                rowIndex: rowIndex
+              });
+              return formatMonetaryValue(0);
+            })(),
+            totalContratoProveedores: (() => {
+              // CELDA 2: Total Prov. = Total Contrato Proveedores (total completo de la tabla desde ProyectoDetalle)
+              const valor = project.total_contrato_proveedores !== undefined ? project.total_contrato_proveedores : project.totalContratoProveedores;
+              if (valor !== undefined && valor !== null && valor !== '') {
+                const valorFormateado = formatMonetaryValue(valor);
+                console.log(`✅ Total Contrato Proveedores leído CORRECTAMENTE:`, {
+                  proyecto: project.nombre_proyecto || project.nombreProyecto,
+                  valorOriginal: valor,
+                  tipo: typeof valor,
+                  valorFormateado: valorFormateado,
+                  fuente: project.total_contrato_proveedores !== undefined ? 'total_contrato_proveedores (mapeado)' : 'totalContratoProveedores (directo)',
+                  rowIndex: rowIndex
+                });
+                return valorFormateado;
+              }
+              console.warn(`❌ Total Contrato Proveedores NO encontrado para proyecto:`, {
+                proyecto: project.nombre_proyecto || project.nombreProyecto,
+                total_contrato_proveedores: project.total_contrato_proveedores,
+                totalContratoProveedores: project.totalContratoProveedores,
+                rowIndex: rowIndex
+              });
+              return formatMonetaryValue(0);
+            })(),
             saldoPagarProveedores: formatMonetaryValue(project.saldo_pagar_proveedores || project.saldoPagarProveedores),
             adelantosCliente: formatMonetaryValue(project.adelantos_cliente || project.adelantosCliente),
-            saldosCobrarProyecto: formatMonetaryValue(project.saldos_cobrar_proyecto || project.saldosCobrarProyecto),
-            creditoFiscal: formatMonetaryValue(project.credito_fiscal || project.creditoFiscal),
-            impuestoRealProyecto: formatMonetaryValue(project.impuesto_real_proyecto || project.impuestoRealProyecto)
+            saldosCobrarProyecto: (() => {
+              // X Cobrar = Saldo X Cobrar (desde ProyectoDetalle)
+              // Usar siempre saldoXCobrar directamente desde projectDataService
+              // Este valor se calcula automáticamente en projectDataService.js como: Monto Contrato - Adelantos
+              const valor = project.saldoXCobrar !== undefined && project.saldoXCobrar !== null ? project.saldoXCobrar :
+                           project.saldos_cobrar_proyecto !== undefined && project.saldos_cobrar_proyecto !== null ? project.saldos_cobrar_proyecto :
+                           project.saldosCobrarProyecto !== undefined && project.saldosCobrarProyecto !== null ? project.saldosCobrarProyecto : null;
+              
+              if (valor !== null && valor !== undefined && valor !== '') {
+                const valorFormateado = formatMonetaryValue(valor);
+                console.log(`✅ Saldo X Cobrar leído CORRECTAMENTE:`, {
+                  proyecto: project.nombre_proyecto || project.nombreProyecto,
+                  valorOriginal: valor,
+                  tipo: typeof valor,
+                  valorFormateado: valorFormateado,
+                  fuente: project.saldoXCobrar !== undefined ? 'saldoXCobrar (directo desde ProyectoDetalle)' :
+                         project.saldos_cobrar_proyecto !== undefined ? 'saldos_cobrar_proyecto (mapeado)' :
+                         'saldosCobrarProyecto (legacy)',
+                  rowIndex: rowIndex,
+                  // Debug: mostrar todos los valores disponibles
+                  todosLosValores: {
+                    saldoXCobrar: project.saldoXCobrar,
+                    saldos_cobrar_proyecto: project.saldos_cobrar_proyecto,
+                    saldosCobrarProyecto: project.saldosCobrarProyecto
+                  }
+                });
+                return valorFormateado;
+              }
+              
+              // Si no hay valor pero tenemos monto y adelantos, calcularlo
+              const monto = parseFloat(project.monto_contrato || project.montoContrato || 0);
+              const adelantos = parseFloat(project.adelantos_cliente || project.adelantosCliente || project.adelantos || 0);
+              if (!isNaN(monto) && !isNaN(adelantos)) {
+                const calculado = monto - adelantos;
+                return formatMonetaryValue(calculado);
+              }
+              
+              return formatMonetaryValue(0);
+            })(),
+            creditoFiscal: (() => {
+              // CELDA 3: Créd. Fiscal = Crédito Fiscal Estimado (desde ProyectoDetalle)
+              // Priorizar credito_fiscal_estimado que es el campo correcto desde ProyectoDetalle
+              // Ahora calculado en projectDataService: (Suma de PRESUPUESTOS con F) × 0.18 / 1.18
+              const valor = project.credito_fiscal_estimado !== undefined ? project.credito_fiscal_estimado : 
+                           project.creditoFiscalEstimado !== undefined ? project.creditoFiscalEstimado :
+                           project.credito_fiscal !== undefined ? project.credito_fiscal :
+                           project.creditoFiscal !== undefined ? project.creditoFiscal : null;
+              
+              if (valor !== null && valor !== undefined && valor !== '') {
+                const valorFormateado = formatMonetaryValue(valor);
+                console.log(`✅ Crédito Fiscal Estimado leído CORRECTAMENTE:`, {
+                  proyecto: project.nombre_proyecto || project.nombreProyecto,
+                  valorOriginal: valor,
+                  tipo: typeof valor,
+                  valorFormateado: valorFormateado,
+                  fuente: project.credito_fiscal_estimado !== undefined ? 'credito_fiscal_estimado (mapeado)' :
+                         project.creditoFiscalEstimado !== undefined ? 'creditoFiscalEstimado (directo)' :
+                         project.credito_fiscal !== undefined ? 'credito_fiscal (legacy)' :
+                         'creditoFiscal (legacy)',
+                  rowIndex: rowIndex
+                });
+                return valorFormateado;
+              }
+              
+              // Si no hay valor, intentar calcularlo si hay categorías
+              // FÓRMULA: (Suma de PRESUPUESTOS con F) × 0.18 / 1.18
+              if (project.categorias && Array.isArray(project.categorias)) {
+                const totalPresupuestosConFactura = project.categorias.reduce((sum, cat) => {
+                  const tieneFactura = (cat.tipo || '').toString().toLowerCase() === 'f';
+                  if (!tieneFactura) return sum;
+                  const bruto = cat.presupuestoDelProyecto ?? 0;
+                  // Limpiar valor si es string
+                  const valorCat = typeof bruto === 'string' ? parseFloat(bruto.replace(/[^0-9.-]/g, '')) || 0 : bruto;
+                  return sum + valorCat;
+                }, 0);
+                
+                if (totalPresupuestosConFactura > 0) {
+                  const calculado = totalPresupuestosConFactura * 0.18 / 1.18;
+                  return formatMonetaryValue(calculado);
+                }
+              }
+              
+              return formatMonetaryValue(0);
+            })(),
+            creditoFiscalReal: formatMonetaryValue(project.credito_fiscal_real || project.creditoFiscalReal),
+            impuestoRealProyecto: (() => {
+              // Leer el valor de impuestoRealDelProyecto del proyecto (ya calculado correctamente)
+              // Priorizar impuestoRealDelProyecto que es el campo correcto en el servicio
+              const valor = project.impuestoRealDelProyecto || project.impuesto_real_del_proyecto || project.impuestoRealProyecto || project.impuesto_real_proyecto;
+              
+              // Si el valor es un número, formatearlo; si es string, verificar si ya está formateado
+              if (valor !== undefined && valor !== null && valor !== '') {
+                const valorFormateado = formatMonetaryValue(valor);
+                console.log(`💰 Impuesto Real del Proyecto leído:`, {
+                  proyecto: project.nombre_proyecto || project.nombreProyecto,
+                  valorOriginal: valor,
+                  tipo: typeof valor,
+                  valorFormateado: valorFormateado
+                });
+                return valorFormateado;
+              }
+              
+              // Si no hay valor, intentar calcularlo
+              // FÓRMULA: IGV - Crédito Fiscal Real
+              // IGV = (Monto Contrato / 1.18) * 0.18
+              // Crédito Fiscal Real = (Suma de Egresos con F / 1.18) * 0.18
+              const montoContrato = parseFloat(project.monto_contrato || project.montoContrato || 0);
+              
+              if (montoContrato > 0 && project.categorias && Array.isArray(project.categorias)) {
+                const igvSunat = (montoContrato / 1.18) * 0.18;
+                
+                const totalEgresosConFactura = project.categorias.reduce((sum, cat) => {
+                  const tieneFactura = (cat.tipo || '').toString().toLowerCase() === 'f';
+                  if (!tieneFactura) return sum;
+                  const egresos = parseFloat(String(cat.registroEgresos || 0).replace(/[^0-9.-]/g, '')) || 0;
+                  return sum + egresos;
+                }, 0);
+                
+                const creditoFiscalReal = (totalEgresosConFactura / 1.18) * 0.18;
+                const impuestoRealCalculado = igvSunat - creditoFiscalReal;
+                
+                return formatMonetaryValue(impuestoRealCalculado);
+              }
+              
+              return formatMonetaryValue(0);
+            })()
           };
           
           rowIndex++; // Incrementar para el siguiente proyecto
@@ -273,17 +556,43 @@ const ExcelGridSimple = () => {
     }
   };
 
+  // 🔄 Cargar datos iniciales y escuchar cambios de projectDataService
+  useEffect(() => {
+    // Cargar datos iniciales
+    loadProjectsData();
+    
+    // 🔄 ESCUCHAR CAMBIOS DE projectDataService para auto-actualizar cuando se editen datos en ProyectoDetalle
+    const unsubscribe = projectDataService.addListener((updatedProjects) => {
+      console.log('🔄 Cambios detectados en projectDataService, recargando datos...', {
+        proyectosActualizados: Object.keys(updatedProjects).length,
+        proyectos: Object.keys(updatedProjects)
+      });
+      // Recargar datos cuando haya cambios
+      loadProjectsData();
+    });
+    
+    // Cleanup: desuscribirse cuando el componente se desmonte
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [loadProjectsData]);
+
   const handleGoBack = () => {
     navigate('/inicio');
   };
 
   // 🧮 FUNCIÓN PARA CALCULAR CAMPOS AUTOMÁTICOS
-  const calculateAutomaticFields = (projectData) => {
+  // ⚠️ DESHABILITADA: Esta función calcula valores incorrectos y NO debe usarse.
+  // Los valores deben venir directamente desde ProyectoDetalle a través de projectDataService.
+  // Si se necesita en el futuro, debe usar los valores desde projectDataService, NO calcularlos.
+  const calculateAutomaticFields_DISABLED = (projectData) => {
     // Convertir string de dinero a número para cálculos
     const parseMoneyValue = (value) => {
       if (!value) return 0;
       if (typeof value === 'number') return value;
-      return parseFloat(value.toString().replace(/[$,\/]/g, '')) || 0;
+      // Remover S/, $, comas y espacios, pero mantener el punto decimal
+      const cleaned = value.toString().replace(/[S$\/,\s]/g, '');
+      return parseFloat(cleaned) || 0;
     };
 
     // Convertir número a formato de dinero con separadores de miles y dos decimales
@@ -302,6 +611,7 @@ const ExcelGridSimple = () => {
     const utilidadEstimadaCon = parseMoneyValue(projectData.utilidadEstimadaFacturado);
     const utilidadRealCon = parseMoneyValue(projectData.utilidadRealFacturado);
     const creditoFiscal = parseMoneyValue(projectData.creditoFiscal);
+    const creditoFiscalReal = parseMoneyValue(projectData.creditoFiscalReal);
     const impuestoReal = parseMoneyValue(projectData.impuestoRealProyecto);
 
     // 🧮 FÓRMULAS FINANCIERAS REALES DE EXCEL
@@ -336,8 +646,24 @@ const ExcelGridSimple = () => {
     // 10. Saldo X Cobrar del Proyecto (más complejo)
     const saldoCobrarProyecto = montoContrato - adelantosCliente - (montoContrato * 0.05); // Menos retención
     
-    // 11. Impuesto Real del Proyecto = Monto Contrato * 0.19 (IVA en Colombia)
-    const impuestoRealCalculado = impuestoReal || (montoContrato * 0.19);
+    // 11. Impuesto Real del Proyecto = IGV - SUNAT 18% - Crédito Fiscal Real
+    // Usar el valor del proyecto directamente si ya está calculado y formateado
+    // El valor viene de projectDataService que ya lo calcula correctamente
+    let impuestoRealFinal = projectData.impuestoRealProyecto;
+    
+    // Si el valor no existe o es 0, intentar calcularlo
+    if (!impuestoRealFinal || parseMoneyValue(impuestoRealFinal) === 0) {
+      // Si hay un valor parseado mayor a 0, usarlo
+      if (impuestoReal && impuestoReal > 0) {
+        impuestoRealFinal = formatMoney(impuestoReal);
+      } else {
+        // Calcularlo: IGV - Crédito Fiscal Real
+        const igvSunat = (montoContrato / 1.18) * 0.18;
+        const creditoFiscalRealValue = creditoFiscalReal || 0;
+        const impuestoRealCalculado = igvSunat - creditoFiscalRealValue;
+        impuestoRealFinal = formatMoney(impuestoRealCalculado);
+      }
+    }
     
     // 12. Crédito Fiscal = Impuesto sobre compras a proveedores
     const creditoFiscalCalculado = creditoFiscal || (totalContratoProveedores * 0.19);
@@ -352,7 +678,8 @@ const ExcelGridSimple = () => {
       utilidadRealFacturado: formatMoney(utilidadRealConCalculada),
       saldoPagarProveedores: formatMoney(saldoPagar),
       saldosCobrarProyecto: formatMoney(saldoCobrarProyecto),
-      impuestoRealProyecto: formatMoney(impuestoRealCalculado),
+      // Usar el valor del proyecto directamente (ya viene calculado y formateado desde projectDataService)
+      impuestoRealProyecto: impuestoRealFinal,
       creditoFiscal: formatMoney(creditoFiscalCalculado)
     };
   };
@@ -596,6 +923,7 @@ const ExcelGridSimple = () => {
     }));
   };
 
+
   const clearAllFilters = () => {
     setFilters({
       nombreProyecto: '',
@@ -605,31 +933,42 @@ const ExcelGridSimple = () => {
     });
   };
 
-  // Filtrar datos basado en los filtros aplicados
+  // 🔍 FUNCIÓN PARA OBTENER DATOS FILTRADOS
   const getFilteredData = () => {
-    const dataEntries = Object.entries(data);
+    // Si no hay filtros activos, retornar todos los datos
+    const hasFilters = Object.values(filters).some(val => val !== '');
+    if (!hasFilters) return data;
+
+    const filtered = {};
     
-    if (!filters.nombreProyecto && !filters.nombreCliente && !filters.estadoProyecto && !filters.tipoProyecto) {
-      return data; // Sin filtros, devolver todos los datos
-    }
+    Object.keys(data).forEach(key => {
+      const item = data[key];
+      
+      // Validar que el item exista
+      if (!item) return;
 
-    const filteredEntries = dataEntries.filter(([rowIndex, rowData]) => {
-      const matchesNombreProyecto = !filters.nombreProyecto || 
-        (rowData.nombreProyecto && rowData.nombreProyecto.toLowerCase().includes(filters.nombreProyecto.toLowerCase()));
-      
-      const matchesNombreCliente = !filters.nombreCliente || 
-        (rowData.nombreCliente && rowData.nombreCliente.toLowerCase().includes(filters.nombreCliente.toLowerCase()));
-      
-      const matchesEstadoProyecto = !filters.estadoProyecto || 
-        rowData.estadoProyecto === filters.estadoProyecto;
-      
-      const matchesTipoProyecto = !filters.tipoProyecto || 
-        rowData.tipoProyecto === filters.tipoProyecto;
+      // Filtro por Nombre Proyecto
+      const matchNombre = filters.nombreProyecto === '' || 
+        (item.nombreProyecto && item.nombreProyecto.toString().toLowerCase().includes(filters.nombreProyecto.toLowerCase()));
+        
+      // Filtro por Nombre Cliente
+      const matchCliente = filters.nombreCliente === '' || 
+        (item.nombreCliente && item.nombreCliente.toString().toLowerCase().includes(filters.nombreCliente.toLowerCase()));
+        
+      // Filtro por Estado
+      const matchEstado = filters.estadoProyecto === '' || 
+        (item.estadoProyecto === filters.estadoProyecto);
+        
+      // Filtro por Tipo
+      const matchTipo = filters.tipoProyecto === '' || 
+        (item.tipoProyecto === filters.tipoProyecto);
 
-      return matchesNombreProyecto && matchesNombreCliente && matchesEstadoProyecto && matchesTipoProyecto;
+      if (matchNombre && matchCliente && matchEstado && matchTipo) {
+        filtered[key] = item;
+      }
     });
-
-    return Object.fromEntries(filteredEntries);
+    
+    return filtered;
   };
 
   const handleToggleRowSelection = (rowKey) => {
@@ -1023,7 +1362,7 @@ const ExcelGridSimple = () => {
           style={{
             lineHeight: '1.2',
             height: config.rowHeight,
-            padding: '2px 4px', // Padding fijo para mejor legibilidad
+            padding: '2px 4px',
             minWidth: '100%'
           }}
         >
@@ -1034,7 +1373,9 @@ const ExcelGridSimple = () => {
           <option value="Cancelado" className={`bg-white text-black ${config.fontSize}`}>Cancelado</option>
         </select>
       );
-    } else if (columnKey === 'tipoProyecto') {
+    }
+
+    if (columnKey === 'tipoProyecto') {
       return (
         <select
           value={value}
@@ -1043,7 +1384,7 @@ const ExcelGridSimple = () => {
           style={{
             lineHeight: '1.2',
             height: config.rowHeight,
-            padding: '2px 4px', // Padding fijo para mejor legibilidad
+            padding: '2px 4px',
             minWidth: '100%'
           }}
         >
@@ -1053,8 +1394,8 @@ const ExcelGridSimple = () => {
           <option value="Proyecto" className={`bg-white text-black ${config.fontSize}`}>Proyecto</option>
         </select>
       );
-    } else {
-      // 🔥 TODOS LOS DEMÁS CAMPOS: INPUT ULTRA COMPACTO ESTILO EXCEL
+    }
+
       const moneyColumns = [
         'montoContrato', 'presupuestoProyecto', 'balanceProyecto',
         'utilidadEstimadaSinFactura', 'utilidadRealSinFactura',
@@ -1108,7 +1449,6 @@ const ExcelGridSimple = () => {
           }}
         />
       );
-    }
   };
 
   return (

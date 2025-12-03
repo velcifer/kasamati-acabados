@@ -108,6 +108,18 @@ export const useProjectDetail = (projectId) => {
                           parseFloat(value.toString().replace(/[^0-9.-]/g, '')) || 0 : 
                           value;
 
+    // 🔍 DEBUG: Log específico para saldoXCobrar
+    if (fieldName === 'saldoXCobrar') {
+      console.log(`🔄 useProjectData.updateField: Guardando saldoXCobrar:`, {
+        valorOriginal: value,
+        valorProcesado: processedValue,
+        tipoOriginal: typeof value,
+        tipoProcesado: typeof processedValue,
+        projectId: projectId,
+        proyectoNombre: project.nombreProyecto
+      });
+    }
+
     const updates = { [fieldName]: processedValue };
     projectDataService.updateProject(projectId, updates);
   }, [projectId, project]);
@@ -195,7 +207,8 @@ export const useExcelGrid = () => {
         // 🔵 ANÁLISIS FINANCIERO DEL PROYECTO
         montoContrato: formatMoney(project.montoContrato),
         presupuestoProyecto: formatMoney(project.presupuestoProyecto),
-        balanceProyecto: formatMoney((project.presupuestoProyecto || 0) - (project.totalSaldoPorPagarProveedores || 0)),
+        // Balance Del Presupuesto: Usar el valor desde ProyectoDetalle (NO calcular automáticamente)
+        balanceProyecto: formatMoney(project.balanceDelPresupuesto || 0),
         utilidadEstimadaSinFactura: formatMoney(project.utilidadEstimadaSinFactura),
         utilidadRealSinFactura: formatMoney(project.utilidadRealSinFactura),
         balanceUtilidadSinFactura: formatMoney(project.balanceUtilidadSinFactura),
@@ -204,14 +217,16 @@ export const useExcelGrid = () => {
         balanceUtilidadConFactura: formatMoney(project.balanceUtilidadConFactura),
         
         // 🟢 COBRANZAS Y SALDOS POR PAGAR
-        totalContratoProveedores: formatMoney(project.totalContratoProveedores),
+        // Total Contrato Proveedores: Usar el valor desde ProyectoDetalle (total completo de la tabla)
+        totalContratoProveedores: formatMoney(project.totalContratoProveedores || 0),
         saldoPagarProveedores: formatMoney(project.totalSaldoPorPagarProveedores),
         adelantosCliente: formatMoney(project.adelantos),
         saldosRealesProyecto: formatMoney(project.saldoXCobrar),
         saldosCobrarProyecto: formatMoney(project.balanceDeComprasDelProyecto),
         
         // 🟠 SUNAT
-        creditoFiscal: formatMoney(project.creditoFiscal || project.creditoFiscalReal),
+        // Crédito Fiscal: Usar creditoFiscalEstimado desde ProyectoDetalle (NO calcular automáticamente)
+        creditoFiscal: formatMoney(project.creditoFiscalEstimado || project.creditoFiscal || project.creditoFiscalReal || 0),
         impuestoRealProyecto: formatMoney(project.impuestoRealDelProyecto),
         
         // 📊 CAMPOS ADICIONALES CALCULADOS
