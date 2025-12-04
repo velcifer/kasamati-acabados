@@ -208,7 +208,12 @@ export const localStorageAPI = {
       // Aplicar cálculos automáticos
       updatedData.balanceUtilidadSinFactura = formatAmount(utilEstSin - utilRealSin);
       updatedData.balanceUtilidadConFactura = formatAmount(utilEstCon - utilRealCon);
-      updatedData.saldosCobrarProyecto = formatAmount(montoContrato - adelantos);
+      // NO calcular saldosCobrarProyecto automáticamente aquí
+      // Debe venir desde ProyectoDetalle y preservarse
+      // Solo calcular si no existe (fallback)
+      if (!updatedData.saldosCobrarProyecto && updatedData.saldosCobrarProyecto !== 0) {
+        updatedData.saldosCobrarProyecto = formatAmount(montoContrato - adelantos);
+      }
       
       // Guardar proyecto actualizado
       projects[id] = updatedData;

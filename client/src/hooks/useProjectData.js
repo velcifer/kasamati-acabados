@@ -221,12 +221,13 @@ export const useExcelGrid = () => {
         totalContratoProveedores: formatMoney(project.totalContratoProveedores || 0),
         saldoPagarProveedores: formatMoney(project.totalSaldoPorPagarProveedores),
         adelantosCliente: formatMoney(project.adelantos),
-        saldosRealesProyecto: formatMoney(project.saldoXCobrar),
-        saldosCobrarProyecto: formatMoney(project.balanceDeComprasDelProyecto),
+        // X Cobrar en la grilla debe coincidir con “Saldo Por Cobrar” del detalle:
+        // SaldoXCobrar = MontoContrato - Adelantos
+        saldosCobrarProyecto: formatMoney(project.saldoXCobrar),
         
         // 🟠 SUNAT
-        // Crédito Fiscal: Usar creditoFiscalEstimado desde ProyectoDetalle (NO calcular automáticamente)
-        creditoFiscal: formatMoney(project.creditoFiscalEstimado || project.creditoFiscal || project.creditoFiscalReal || 0),
+        // Crédito Fiscal (grilla) debe mostrar el **Crédito Fiscal Real** del detalle
+        creditoFiscal: formatMoney(project.creditoFiscalReal || project.creditoFiscalEstimado || project.creditoFiscal || 0),
         impuestoRealProyecto: formatMoney(project.impuestoRealDelProyecto),
         
         // 📊 CAMPOS ADICIONALES CALCULADOS

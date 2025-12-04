@@ -359,50 +359,35 @@ const ExcelGridSimple = () => {
             saldoPagarProveedores: formatMonetaryValue(project.saldo_pagar_proveedores || project.saldoPagarProveedores),
             adelantosCliente: formatMonetaryValue(project.adelantos_cliente || project.adelantosCliente),
             saldosCobrarProyecto: (() => {
-              // X Cobrar = Saldo X Cobrar (desde ProyectoDetalle)
-              // Usar siempre saldoXCobrar directamente desde projectDataService
-              // Este valor se calcula automáticamente en projectDataService.js como: Monto Contrato - Adelantos
-              const valor = project.saldoXCobrar !== undefined && project.saldoXCobrar !== null ? project.saldoXCobrar :
-                           project.saldos_cobrar_proyecto !== undefined && project.saldos_cobrar_proyecto !== null ? project.saldos_cobrar_proyecto :
-                           project.saldosCobrarProyecto !== undefined && project.saldosCobrarProyecto !== null ? project.saldosCobrarProyecto : null;
-              
-              if (valor !== null && valor !== undefined && valor !== '') {
-                const valorFormateado = formatMonetaryValue(valor);
-                console.log(`✅ Saldo X Cobrar leído CORRECTAMENTE:`, {
-                  proyecto: project.nombre_proyecto || project.nombreProyecto,
-                  valorOriginal: valor,
-                  tipo: typeof valor,
-                  valorFormateado: valorFormateado,
-                  fuente: project.saldoXCobrar !== undefined ? 'saldoXCobrar (directo desde ProyectoDetalle)' :
-                         project.saldos_cobrar_proyecto !== undefined ? 'saldos_cobrar_proyecto (mapeado)' :
-                         'saldosCobrarProyecto (legacy)',
-                  rowIndex: rowIndex,
-                  // Debug: mostrar todos los valores disponibles
-                  todosLosValores: {
-                    saldoXCobrar: project.saldoXCobrar,
-                    saldos_cobrar_proyecto: project.saldos_cobrar_proyecto,
-                    saldosCobrarProyecto: project.saldosCobrarProyecto
-                  }
-                });
-                return valorFormateado;
-              }
-              
-              // Si no hay valor pero tenemos monto y adelantos, calcularlo
-              const monto = parseFloat(project.monto_contrato || project.montoContrato || 0);
-              const adelantos = parseFloat(project.adelantos_cliente || project.adelantosCliente || project.adelantos || 0);
-              if (!isNaN(monto) && !isNaN(adelantos)) {
-                const calculado = monto - adelantos;
-                return formatMonetaryValue(calculado);
-              }
-              
-              return formatMonetaryValue(0);
+              // X Cobrar en la grilla SIEMPRE debe seguir exactamente la misma fórmula de ProyectoDetalle:
+              // Saldo Por Cobrar = Monto del Contrato - Adelantos
+              // Para evitar valores viejos guardados, NO usamos directamente project.saldoXCobrar aquí.
+              const parseNumber = (v) => {
+                if (v === undefined || v === null || v === '') return 0;
+                if (typeof v === 'number') return v;
+                const n = parseFloat(String(v).replace(/[^0-9.-]/g, ''));
+                return isNaN(n) ? 0 : n;
+              };
+
+              const monto = parseNumber(project.monto_contrato ?? project.montoContrato);
+              const adelantos = parseNumber(project.adelantos_cliente ?? project.adelantos ?? project.adelantosCliente);
+
+              const saldoCalculado = monto - adelantos;
+
+              console.log('📊 ExcelGridSimple: X Cobrar recalculado en grilla', {
+                proyecto: project.nombre_proyecto || project.nombreProyecto,
+                montoContrato: monto,
+                adelantos,
+                saldoCalculado
+              });
+
+              return formatMonetaryValue(saldoCalculado);
             })(),
             creditoFiscal: (() => {
-              // CELDA 3: Créd. Fiscal = Crédito Fiscal Estimado (desde ProyectoDetalle)
-              // Priorizar credito_fiscal_estimado que es el campo correcto desde ProyectoDetalle
-              // Ahora calculado en projectDataService: (Suma de PRESUPUESTOS con F) × 0.18 / 1.18
-              const valor = project.credito_fiscal_estimado !== undefined ? project.credito_fiscal_estimado : 
-                           project.creditoFiscalEstimado !== undefined ? project.creditoFiscalEstimado :
+              // CELDA 3: Créd. Fiscal en la grilla debe mostrar el **Crédito Fiscal Real**
+              // Priorizar credito_fiscal_real / creditoFiscalReal que vienen desde ProyectoDetalle
+              const valor = project.credito_fiscal_real !== undefined ? project.credito_fiscal_real :
+                           project.creditoFiscalReal !== undefined ? project.creditoFiscalReal :
                            project.credito_fiscal !== undefined ? project.credito_fiscal :
                            project.creditoFiscal !== undefined ? project.creditoFiscal : null;
               
@@ -413,8 +398,8 @@ const ExcelGridSimple = () => {
                   valorOriginal: valor,
                   tipo: typeof valor,
                   valorFormateado: valorFormateado,
-                  fuente: project.credito_fiscal_estimado !== undefined ? 'credito_fiscal_estimado (mapeado)' :
-                         project.creditoFiscalEstimado !== undefined ? 'creditoFiscalEstimado (directo)' :
+                  fuente: project.credito_fiscal_real !== undefined ? 'credito_fiscal_real (mapeado)' :
+                         project.creditoFiscalReal !== undefined ? 'creditoFiscalReal (directo)' :
                          project.credito_fiscal !== undefined ? 'credito_fiscal (legacy)' :
                          'creditoFiscal (legacy)',
                   rowIndex: rowIndex
@@ -423,19 +408,17 @@ const ExcelGridSimple = () => {
               }
               
               // Si no hay valor, intentar calcularlo si hay categorías
-              // FÓRMULA: (Suma de PRESUPUESTOS con F) × 0.18 / 1.18
+              // FÓRMULA: Crédito Fiscal Real = (Suma de Registro Egresos con F / 1.18) × 0.18
               if (project.categorias && Array.isArray(project.categorias)) {
-                const totalPresupuestosConFactura = project.categorias.reduce((sum, cat) => {
+                const totalEgresosConFactura = project.categorias.reduce((sum, cat) => {
                   const tieneFactura = (cat.tipo || '').toString().toLowerCase() === 'f';
                   if (!tieneFactura) return sum;
-                  const bruto = cat.presupuestoDelProyecto ?? 0;
-                  // Limpiar valor si es string
-                  const valorCat = typeof bruto === 'string' ? parseFloat(bruto.replace(/[^0-9.-]/g, '')) || 0 : bruto;
-                  return sum + valorCat;
+                  const egresos = parseFloat(String(cat.registroEgresos || 0).replace(/[^0-9.-]/g, '')) || 0;
+                  return sum + egresos;
                 }, 0);
-                
-                if (totalPresupuestosConFactura > 0) {
-                  const calculado = totalPresupuestosConFactura * 0.18 / 1.18;
+
+                if (totalEgresosConFactura > 0) {
+                  const calculado = (totalEgresosConFactura / 1.18) * 0.18;
                   return formatMonetaryValue(calculado);
                 }
               }
