@@ -3,11 +3,17 @@ const mysql = require('mysql2/promise');
 
 // 📊 CONFIGURACIÓN DE CONEXIÓN
 const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
+   /*host: process.env.DB_HOST || 'localhost',
+   user: process.env.DB_USER || 'root',
+   password: process.env.DB_PASSWORD || 'Julio123#',
+   database: process.env.DB_NAME || 'ksamti_proyectos',
+   port: process.env.DB_PORT || 3306,*/
+
+  host: process.env.DB_HOST || 'ballast.proxy.rlwy.net',
   user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'ksamti_proyectos',
-  port: process.env.DB_PORT || 3306,
+  password: process.env.DB_PASSWORD || 'SXQEOCvtQDZRPaMYQCueobuZAUsBIhxL',
+  database: process.env.DB_NAME || 'railway',
+  port: process.env.DB_PORT || 53369,
   
   // 🔧 CONFIGURACIÓN DE POOL (mysql2 compatible)
   waitForConnections: true,
@@ -70,21 +76,41 @@ const executeTransaction = async (queries) => {
   const connection = await pool.getConnection();
   
   try {
+    console.log(`   🔄 Iniciando transacción con ${queries.length} queries...`);
     await connection.beginTransaction();
     
     const results = [];
-    for (const { query, params } of queries) {
-      const [rows] = await connection.execute(query, params || []);
-      results.push(rows);
+    for (let i = 0; i < queries.length; i++) {
+      const { query, params } = queries[i];
+      console.log(`   📝 Ejecutando query ${i + 1}/${queries.length}...`);
+      console.log(`      Query: ${query.substring(0, 100)}...`);
+      console.log(`      Params:`, params);
+      try {
+        const [rows] = await connection.execute(query, params || []);
+        results.push(rows);
+        console.log(`      ✅ Query ${i + 1} exitosa`);
+      } catch (queryError) {
+        console.error(`      ❌ Error en query ${i + 1}:`, queryError.message);
+        console.error(`         Código:`, queryError.code);
+        console.error(`         SQL State:`, queryError.sqlState);
+        throw queryError; // Re-lanzar para que se haga rollback
+      }
     }
     
+    console.log(`   💾 Haciendo commit de la transacción...`);
     await connection.commit();
+    console.log(`   ✅ Transacción completada exitosamente`);
     return { results, success: true };
   } catch (error) {
+    console.error(`   ❌ Error en transacción, haciendo rollback...`);
+    console.error(`      Mensaje:`, error.message);
+    console.error(`      Código:`, error.code);
+    console.error(`      SQL State:`, error.sqlState);
     await connection.rollback();
-    throw new Error(`Transaction failed: ${error.message}`);
+    throw new Error(`Transaction failed: ${error.message} (Code: ${error.code}, SQLState: ${error.sqlState})`);
   } finally {
     connection.release();
+    console.log(`   🔓 Conexión liberada`);
   }
 };
 
@@ -97,9 +123,9 @@ const getDatabaseStats = async () => {
       'SELECT estado_proyecto, COUNT(*) as cantidad FROM proyectos GROUP BY estado_proyecto',
     ];
     
-    const [totalProyectos] = await executeQuery(queries[0]);
-    const [totalCategorias] = await executeQuery(queries[1]); 
-    const [estadisticasEstado] = await executeQuery(queries[2]);
+    const totalProyectos = await executeQuery(queries[0]);
+    const totalCategorias = await executeQuery(queries[1]);
+    const estadisticasEstado = await executeQuery(queries[2]);
     
     return {
       totalProyectos: totalProyectos.rows[0].total_proyectos,

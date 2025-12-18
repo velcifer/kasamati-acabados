@@ -1,6 +1,11 @@
--- 🗄️ KSAMATI PROJECT - COMPLETE MySQL DATABASE SCHEMA
--- Estructura completa actualizada con todas las funcionalidades nuevas
--- Incluye: Proyectos, Ventas, Documentos, Archivos, Fórmulas Automáticas
+-- ========================================
+-- 🗄️ KSAMATI PROJECT - ESQUEMA COMPLETO DE BASE DE DATOS
+-- ========================================
+-- Nombre de la Base de Datos: ksamati_proyectos
+-- Motor: MySQL 5.7+ / MySQL 8.0+
+-- Charset: utf8mb4
+-- Collation: utf8mb4_unicode_ci
+-- ========================================
 
 -- ========================================
 -- 📊 CREAR BASE DE DATOS
@@ -9,7 +14,7 @@ CREATE DATABASE IF NOT EXISTS ksamati_proyectos CHARACTER SET utf8mb4 COLLATE ut
 USE ksamati_proyectos;
 
 -- ========================================
--- 📋 TABLA PRINCIPAL DE PROYECTOS
+-- 📋 TABLA 1: proyectos
 -- ========================================
 CREATE TABLE proyectos (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -53,7 +58,7 @@ CREATE TABLE proyectos (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ========================================
--- 🏗️ TABLA DETALLE COMPLETO DE PROYECTOS
+-- 📋 TABLA 2: proyecto_detalles
 -- ========================================
 CREATE TABLE proyecto_detalles (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -92,7 +97,7 @@ CREATE TABLE proyecto_detalles (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ========================================
--- 📦 TABLA CATEGORÍAS DE PROVEEDORES (24 categorías como en Excel)
+-- 📋 TABLA 3: proyecto_categorias
 -- ========================================
 CREATE TABLE proyecto_categorias (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -120,7 +125,7 @@ CREATE TABLE proyecto_categorias (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ========================================
--- 📄 TABLA DOCUMENTOS DEL PROYECTO (NUEVA)
+-- 📋 TABLA 4: proyecto_documentos
 -- ========================================
 CREATE TABLE proyecto_documentos (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -140,7 +145,7 @@ CREATE TABLE proyecto_documentos (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ========================================
--- 📎 TABLA ARCHIVOS ADJUNTOS (NUEVA)
+-- 📋 TABLA 5: archivos_adjuntos
 -- ========================================
 CREATE TABLE archivos_adjuntos (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -165,7 +170,7 @@ CREATE TABLE archivos_adjuntos (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ========================================
--- 💰 TABLA PRINCIPAL DE VENTAS (NUEVA)
+-- 📋 TABLA 6: ventas
 -- ========================================
 CREATE TABLE ventas (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -197,7 +202,7 @@ CREATE TABLE ventas (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ========================================
--- 🧮 TABLA COTIZADORES DE VENTAS (NUEVA)
+-- 📋 TABLA 7: venta_cotizadores
 -- ========================================
 CREATE TABLE venta_cotizadores (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -224,7 +229,7 @@ CREATE TABLE venta_cotizadores (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ========================================
--- 📊 TABLA PARA LOGS DE CAMBIOS (AUDITORÍA)
+-- 📋 TABLA 8: proyecto_cambios
 -- ========================================
 CREATE TABLE proyecto_cambios (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -245,12 +250,102 @@ CREATE TABLE proyecto_cambios (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ========================================
--- 🔧 PROCEDIMIENTOS ALMACENADOS PARA CÁLCULOS AUTOMÁTICOS
+-- 📋 TABLA 9: data_sync
+-- ========================================
+CREATE TABLE data_sync (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    entidad_tipo ENUM('proyecto', 'venta', 'categoria', 'cotizador') NOT NULL,
+    entidad_id INT NOT NULL,
+    version INT NOT NULL DEFAULT 1,
+    hash_md5 VARCHAR(32) NOT NULL,
+    last_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    user_id VARCHAR(100) DEFAULT 'system',
+    device_id VARCHAR(100) DEFAULT 'unknown',
+    sync_status ENUM('synced', 'pending', 'conflict') DEFAULT 'synced',
+
+    INDEX idx_entidad (entidad_tipo, entidad_id),
+    INDEX idx_version (version),
+    INDEX idx_sync_status (sync_status),
+    INDEX idx_last_modified (last_modified)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ========================================
+-- 📋 TABLA 10: offline_queue
+-- ========================================
+CREATE TABLE offline_queue (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    operation_type ENUM('create', 'update', 'delete') NOT NULL,
+    entidad_tipo ENUM('proyecto', 'venta', 'categoria', 'cotizador') NOT NULL,
+    entidad_id INT,
+    data_json TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    retry_count INT DEFAULT 0,
+    last_retry TIMESTAMP NULL,
+    error_message TEXT,
+    priority INT DEFAULT 1, -- 1=normal, 2=alta, 3=crítica
+    user_id VARCHAR(100) DEFAULT 'system',
+    device_id VARCHAR(100) DEFAULT 'unknown',
+
+    INDEX idx_operation (operation_type),
+    INDEX idx_entidad (entidad_tipo, entidad_id),
+    INDEX idx_created (created_at),
+    INDEX idx_priority (priority DESC, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ========================================
+-- 📋 TABLA 11: sync_conflicts
+-- ========================================
+CREATE TABLE sync_conflicts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    entidad_tipo ENUM('proyecto', 'venta', 'categoria', 'cotizador') NOT NULL,
+    entidad_id INT NOT NULL,
+    local_version INT NOT NULL,
+    remote_version INT NOT NULL,
+    local_data JSON,
+    remote_data JSON,
+    conflict_type ENUM('data_conflict', 'delete_conflict', 'create_conflict') NOT NULL,
+    resolution_status ENUM('pending', 'resolved', 'discarded') DEFAULT 'pending',
+    resolved_by VARCHAR(100),
+    resolved_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    INDEX idx_entidad (entidad_tipo, entidad_id),
+    INDEX idx_status (resolution_status),
+    INDEX idx_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ========================================
+-- 📋 TABLA 12: device_sync_status
+-- ========================================
+CREATE TABLE device_sync_status (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    device_id VARCHAR(100) NOT NULL UNIQUE,
+    device_name VARCHAR(255),
+    last_sync TIMESTAMP NULL,
+    sync_status ENUM('online', 'offline', 'syncing') DEFAULT 'offline',
+    pending_operations INT DEFAULT 0,
+    last_ip VARCHAR(45),
+    user_agent TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    INDEX idx_device (device_id),
+    INDEX idx_status (sync_status),
+    INDEX idx_last_sync (last_sync)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ========================================
+-- 🔧 PROCEDIMIENTOS ALMACENADOS (STORED PROCEDURES)
 -- ========================================
 
 DELIMITER //
 
--- 🧮 Procedimiento para recalcular campos automáticos de PROYECTOS
+-- ========================================
+-- 📋 STORED PROCEDURE 1: CalcularCamposAutomaticosProyecto
+-- ========================================
+-- Descripción: Recalcula todos los campos automáticos de un proyecto
+-- Parámetros: proyecto_id_param (INT) - ID del proyecto
+-- ========================================
 CREATE PROCEDURE CalcularCamposAutomaticosProyecto(IN proyecto_id_param INT)
 BEGIN
     DECLARE monto_contrato_val DECIMAL(15,2) DEFAULT 0;
@@ -315,7 +410,12 @@ BEGIN
     WHERE proyecto_id = proyecto_id_param;
 END //
 
--- 💰 Procedimiento para recalcular campos automáticos de VENTAS
+-- ========================================
+-- 📋 STORED PROCEDURE 2: CalcularCamposAutomaticosVenta
+-- ========================================
+-- Descripción: Recalcula todos los campos automáticos de una venta
+-- Parámetros: venta_id_param (INT) - ID de la venta
+-- ========================================
 CREATE PROCEDURE CalcularCamposAutomaticosVenta(IN venta_id_param INT)
 BEGIN
     DECLARE estado_val VARCHAR(50);
@@ -398,8 +498,14 @@ DELIMITER ;
 -- 🎯 TRIGGERS PARA CÁLCULOS AUTOMÁTICOS
 -- ========================================
 
--- Triggers para PROYECTOS
 DELIMITER //
+
+-- ========================================
+-- 📋 TRIGGER 1: tr_proyectos_update
+-- ========================================
+-- Descripción: Se ejecuta después de actualizar un proyecto
+-- Acción: Llama al procedimiento CalcularCamposAutomaticosProyecto
+-- ========================================
 CREATE TRIGGER tr_proyectos_update 
     AFTER UPDATE ON proyectos
     FOR EACH ROW
@@ -407,6 +513,12 @@ BEGIN
     CALL CalcularCamposAutomaticosProyecto(NEW.id);
 END //
 
+-- ========================================
+-- 📋 TRIGGER 2: tr_categorias_update
+-- ========================================
+-- Descripción: Se ejecuta después de actualizar una categoría
+-- Acción: Llama al procedimiento CalcularCamposAutomaticosProyecto
+-- ========================================
 CREATE TRIGGER tr_categorias_update
     AFTER UPDATE ON proyecto_categorias
     FOR EACH ROW
@@ -414,6 +526,12 @@ BEGIN
     CALL CalcularCamposAutomaticosProyecto(NEW.proyecto_id);
 END //
 
+-- ========================================
+-- 📋 TRIGGER 3: tr_categorias_insert
+-- ========================================
+-- Descripción: Se ejecuta después de insertar una categoría
+-- Acción: Llama al procedimiento CalcularCamposAutomaticosProyecto
+-- ========================================
 CREATE TRIGGER tr_categorias_insert
     AFTER INSERT ON proyecto_categorias
     FOR EACH ROW
@@ -421,7 +539,12 @@ BEGIN
     CALL CalcularCamposAutomaticosProyecto(NEW.proyecto_id);
 END //
 
--- Triggers para VENTAS
+-- ========================================
+-- 📋 TRIGGER 4: tr_ventas_update
+-- ========================================
+-- Descripción: Se ejecuta después de actualizar una venta
+-- Acción: Llama al procedimiento CalcularCamposAutomaticosVenta
+-- ========================================
 CREATE TRIGGER tr_ventas_update
     AFTER UPDATE ON ventas
     FOR EACH ROW
@@ -429,6 +552,12 @@ BEGIN
     CALL CalcularCamposAutomaticosVenta(NEW.id);
 END //
 
+-- ========================================
+-- 📋 TRIGGER 5: tr_cotizadores_update
+-- ========================================
+-- Descripción: Se ejecuta después de actualizar un cotizador
+-- Acción: Llama al procedimiento CalcularCamposAutomaticosVenta
+-- ========================================
 CREATE TRIGGER tr_cotizadores_update
     AFTER UPDATE ON venta_cotizadores
     FOR EACH ROW
@@ -439,231 +568,37 @@ END //
 DELIMITER ;
 
 -- ========================================
--- 🔄 TABLA DE SINCRONIZACIÓN Y VERSIONES
--- ========================================
-CREATE TABLE data_sync (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    entidad_tipo ENUM('proyecto', 'venta', 'categoria', 'cotizador') NOT NULL,
-    entidad_id INT NOT NULL,
-    version INT NOT NULL DEFAULT 1,
-    hash_md5 VARCHAR(32) NOT NULL,
-    last_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    user_id VARCHAR(100) DEFAULT 'system',
-    device_id VARCHAR(100) DEFAULT 'unknown',
-    sync_status ENUM('synced', 'pending', 'conflict') DEFAULT 'synced',
-
-    INDEX idx_entidad (entidad_tipo, entidad_id),
-    INDEX idx_version (version),
-    INDEX idx_sync_status (sync_status),
-    INDEX idx_last_modified (last_modified)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- ========================================
--- 📋 TABLA DE OPERACIONES OFFLINE PENDIENTES
--- ========================================
-CREATE TABLE offline_queue (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    operation_type ENUM('create', 'update', 'delete') NOT NULL,
-    entidad_tipo ENUM('proyecto', 'venta', 'categoria', 'cotizador') NOT NULL,
-    entidad_id INT,
-    data_json TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    retry_count INT DEFAULT 0,
-    last_retry TIMESTAMP NULL,
-    error_message TEXT,
-    priority INT DEFAULT 1, -- 1=normal, 2=alta, 3=crítica
-    user_id VARCHAR(100) DEFAULT 'system',
-    device_id VARCHAR(100) DEFAULT 'unknown',
-
-    INDEX idx_operation (operation_type),
-    INDEX idx_entidad (entidad_tipo, entidad_id),
-    INDEX idx_created (created_at),
-    INDEX idx_priority (priority DESC, created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- ========================================
--- ⚖️ TABLA DE RESOLUCIÓN DE CONFLICTOS
--- ========================================
-CREATE TABLE sync_conflicts (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    entidad_tipo ENUM('proyecto', 'venta', 'categoria', 'cotizador') NOT NULL,
-    entidad_id INT NOT NULL,
-    local_version INT NOT NULL,
-    remote_version INT NOT NULL,
-    local_data JSON,
-    remote_data JSON,
-    conflict_type ENUM('data_conflict', 'delete_conflict', 'create_conflict') NOT NULL,
-    resolution_status ENUM('pending', 'resolved', 'discarded') DEFAULT 'pending',
-    resolved_by VARCHAR(100),
-    resolved_at TIMESTAMP NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    INDEX idx_entidad (entidad_tipo, entidad_id),
-    INDEX idx_status (resolution_status),
-    INDEX idx_created (created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- ========================================
--- 📊 TABLA DE ESTADO DE SINCRONIZACIÓN POR DISPOSITIVO
--- ========================================
-CREATE TABLE device_sync_status (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    device_id VARCHAR(100) NOT NULL UNIQUE,
-    device_name VARCHAR(255),
-    last_sync TIMESTAMP NULL,
-    sync_status ENUM('online', 'offline', 'syncing') DEFAULT 'offline',
-    pending_operations INT DEFAULT 0,
-    last_ip VARCHAR(45),
-    user_agent TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-
-    INDEX idx_device (device_id),
-    INDEX idx_status (sync_status),
-    INDEX idx_last_sync (last_sync)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- ========================================
--- 📝 INSERTAR DATOS DE EJEMPLO PARA DESARROLLO
+-- 📊 RESUMEN COMPLETO DE LA BASE DE DATOS
 -- ========================================
 
--- Proyectos de ejemplo
-INSERT INTO proyectos (
-    numero_proyecto, nombre_proyecto, nombre_cliente, 
-    monto_contrato, presupuesto_proyecto, adelantos_cliente,
-    utilidad_estimada_sin_factura, utilidad_real_sin_factura,
-    utilidad_estimada_facturado, utilidad_real_facturado
-) VALUES 
-(1, 'Oficina Corporativa ABC', 'ABC Corp', 25000.00, 22000.00, 8000.00, 5000.00, 4500.00, 4200.00, 4000.00),
-(2, 'Casa Residencial XYZ', 'Familia Pérez', 18000.00, 16000.00, 6000.00, 3600.00, 3200.00, 3000.00, 2800.00),
-(3, 'Mobiliario Restaurante DEF', 'Restaurant DEF', 12000.00, 11000.00, 4000.00, 2400.00, 2200.00, 2000.00, 1900.00);
+-- Nombre de la Base de Datos: ksamati_proyectos
 
--- Crear detalles para cada proyecto
-INSERT INTO proyecto_detalles (proyecto_id, presupuesto_del_proyecto, observaciones_del_proyecto)
-SELECT id, presupuesto_proyecto, CONCAT('Observaciones detalladas para ', nombre_proyecto)
-FROM proyectos;
+-- Total de Tablas: 12
+-- 1. proyectos
+-- 2. proyecto_detalles
+-- 3. proyecto_categorias
+-- 4. proyecto_documentos
+-- 5. archivos_adjuntos
+-- 6. ventas
+-- 7. venta_cotizadores
+-- 8. proyecto_cambios
+-- 9. data_sync
+-- 10. offline_queue
+-- 11. sync_conflicts
+-- 12. device_sync_status
 
--- Crear categorías estándar para cada proyecto (24 categorías como en Excel)
-INSERT INTO proyecto_categorias (proyecto_id, nombre_categoria, tipo_categoria, orden_categoria, presupuesto_del_proyecto, contrato_proved_y_serv, registro_egresos, saldos_por_cancelar)
-SELECT 
-    p.id, 
-    cat.nombre,
-    cat.tipo,
-    cat.orden,
-    ROUND(RAND() * 3000 + 1000, 2),
-    ROUND(RAND() * 2800 + 900, 2), 
-    ROUND(RAND() * 2500 + 800, 2),
-    ROUND(RAND() * 500 + 100, 2)
-FROM proyectos p
-CROSS JOIN (
-    SELECT 'Melamina y Servicios' as nombre, 'F' as tipo, 1 as orden
-    UNION SELECT 'Melamina High Glass', 'F', 2
-    UNION SELECT 'Accesorios y Ferretería', 'F', 3
-    UNION SELECT 'Puertas Alu Y Vidrios', 'F', 4
-    UNION SELECT 'Led y Electricidad', 'F', 5
-    UNION SELECT 'Flete Y/o Camioneta', '', 6
-    UNION SELECT 'Logística Operativa', '', 7
-    UNION SELECT 'Extras y/o Eventos', '', 8
-    UNION SELECT 'Despecie', '', 9
-    UNION SELECT 'Mano de Obra', '', 10
-    UNION SELECT 'Granito Y/O Cuarzo', 'F', 11
-    UNION SELECT 'Extras Y/O Eventos GyC', '', 12
-    UNION SELECT 'Tercialization 1 Facturada', 'F', 13
-    UNION SELECT 'Extras Y/O Eventos Terc. 1', '', 14
-    UNION SELECT 'Tercialization 2 Facturada', 'F', 15
-    UNION SELECT 'Extras Y/O Eventos Terc. 2', '', 16
-    UNION SELECT 'Tercialization 1 NO Facturada', '', 17
-    UNION SELECT 'Extras Y/O Eventos Terc. 1 NF', '', 18
-    UNION SELECT 'Tercialization 2 NO Facturada', '', 19
-    UNION SELECT 'Extras Y/O Eventos Terc. 2 NF', '', 20
-    UNION SELECT 'OF - ESCP', '', 21
-    UNION SELECT 'Incentivos', '', 22
-    UNION SELECT 'Comisión Directorio', '', 23
-    UNION SELECT 'Utilidad Final', '', 24
-) cat;
+-- Total de Stored Procedures: 2
+-- 1. CalcularCamposAutomaticosProyecto
+-- 2. CalcularCamposAutomaticosVenta
 
--- Crear documentos de ejemplo para cada proyecto
-INSERT INTO proyecto_documentos (proyecto_id, proveedor, descripcion, fecha, monto, orden_documento)
-SELECT 
-    p.id,
-    CONCAT('Proveedor ', CHAR(65 + (p.id % 3))),
-    CONCAT('Documento ', CHAR(49 + (doc_order.orden % 5)), ' para ', p.nombre_proyecto),
-    DATE_SUB(CURDATE(), INTERVAL (RAND() * 30) DAY),
-    ROUND(RAND() * 2000 + 500, 2),
-    doc_order.orden
-FROM proyectos p
-CROSS JOIN (
-    SELECT 1 as orden
-    UNION SELECT 2
-    UNION SELECT 3
-    UNION SELECT 4
-    UNION SELECT 5
-) doc_order;
-
--- Ventas de ejemplo
-INSERT INTO ventas (
-    numero_venta, estado, cliente, telefono, requerimiento, proyecto
-) VALUES 
-(1, 'Cotizando', 'Cliente Alpha', '999123456', 'Mobiliario de oficina ejecutiva completa', 'Venta 1'),
-(2, 'Aprobado', 'Cliente Beta', '999654321', 'Muebles de cocina integral para casa', 'Venta 2'),
-(3, 'Facturado', 'Cliente Gamma', '999789012', 'Oficina corporativa moderna', 'Venta 3');
-
--- Crear cotizadores para cada venta
-INSERT INTO venta_cotizadores (venta_id, tipo_cotizador, categoria, monto, orden_categoria)
-SELECT 
-    v.id,
-    cot.tipo,
-    cot.categoria,
-    ROUND(RAND() * 1500 + 500, 2),
-    cot.orden
-FROM ventas v
-CROSS JOIN (
-    -- Cotizador Melamina
-    SELECT 'melamina' as tipo, 'MELAMINA Y SERVICIOS' as categoria, 1 as orden
-    UNION SELECT 'melamina', 'MELAMINA HIGH GLOSS', 2
-    UNION SELECT 'melamina', 'ACCESORIOS Y FERRETERIA', 3
-    UNION SELECT 'melamina', 'PUERTAS ALU Y VIDRIOS', 4
-    UNION SELECT 'melamina', 'LED Y ELECTRICIDAD', 5
-    UNION SELECT 'melamina', 'UTILIDAD', 14
-    -- Cotizador Granito
-    UNION SELECT 'granito', 'GRANITO Y/O CUARZO', 1
-    UNION SELECT 'granito', 'UTILIDAD', 2
-    -- Cotizador Tercializaciones
-    UNION SELECT 'tercializaciones', 'TERCIALIZACION 1 FACT.', 1
-    UNION SELECT 'tercializaciones', 'UTILIDAD', 2
-) cot;
-
--- Ejecutar cálculos iniciales
-CALL CalcularCamposAutomaticosProyecto(1);
-CALL CalcularCamposAutomaticosProyecto(2);
-CALL CalcularCamposAutomaticosProyecto(3);
-
-CALL CalcularCamposAutomaticosVenta(1);
-CALL CalcularCamposAutomaticosVenta(2);
-CALL CalcularCamposAutomaticosVenta(3);
+-- Total de Triggers: 5
+-- 1. tr_proyectos_update
+-- 2. tr_categorias_update
+-- 3. tr_categorias_insert
+-- 4. tr_ventas_update
+-- 5. tr_cotizadores_update
 
 -- ========================================
--- ✅ VERIFICACIÓN FINAL
+-- ✅ FIN DEL ESQUEMA COMPLETO
 -- ========================================
-
-SELECT 
-    '✅ BASE DE DATOS KSAMATI CREADA EXITOSAMENTE!' as mensaje,
-    COUNT(*) as total_proyectos
-FROM proyectos;
-
-SELECT 
-    '📊 RESUMEN DE TABLAS CREADAS:' as titulo,
-    'proyectos, proyecto_detalles, proyecto_categorias, proyecto_documentos, archivos_adjuntos, ventas, venta_cotizadores, proyecto_cambios' as tablas_creadas;
-
-SELECT 
-    '🔧 PROCEDIMIENTOS Y TRIGGERS INSTALADOS:' as titulo,
-    'CalcularCamposAutomaticosProyecto, CalcularCamposAutomaticosVenta + triggers automáticos' as funcionalidades;
-
--- Mostrar estadísticas finales
-SELECT 
-    (SELECT COUNT(*) FROM proyectos) as total_proyectos,
-    (SELECT COUNT(*) FROM ventas) as total_ventas,
-    (SELECT COUNT(*) FROM proyecto_categorias) as total_categorias,
-    (SELECT COUNT(*) FROM proyecto_documentos) as total_documentos,
-    (SELECT COUNT(*) FROM venta_cotizadores) as total_cotizadores;
 

@@ -3,10 +3,15 @@ import { XMarkIcon, DocumentIcon } from '@heroicons/react/24/outline';
 import { localStorageAPI } from '../../services/localStorage';
 import { useProjectDetail } from '../../hooks/useProjectData';
 import { PencilIcon, DocumentArrowUpIcon, FolderIcon, EyeIcon } from '@heroicons/react/24/solid';
+import projectDataService from '../../services/projectDataService';
 
 const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
   // IDs de categorías cuya celda "Contrato Prov. y Serv." debe estar bloqueada y pintada
   const BLOCKED_CONTRACT_CATEGORY_IDS = [1, 2, 3, 4, 5, 6, 7, 8];
+  
+  // 🔒 SISTEMA DE PRESERVACIÓN: Rastrear qué valores fueron editados por el usuario
+  // Este ref mantiene un registro permanente de valores editados por el usuario
+  const userEditedValuesRef = useRef(new Map()); // Map<`${categoriaId}-${field}`, value>
 
   // Función helper para identificar si una categoría debe tener color plomo en "Saldos por cancelar"
   // Solo las primeras 8 filas específicas según la imagen
@@ -129,6 +134,10 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
   
   // Popup de Cobranzas (acceso desde "Monto del Contrato" de la izquierda)
   const [cobranzasPopupOpen, setCobranzasPopupOpen] = useState(false);
+  const [cobranzasPreviewOpen, setCobranzasPreviewOpen] = useState(false); // Vista previa antes de PDF
+  const [generatingPDF, setGeneratingPDF] = useState(false); // Indicador de generación de PDF
+  const [pdfMenuOpen, setPdfMenuOpen] = useState(false); // Menú de opciones PDF/Imprimir
+  const pdfMenuRef = useRef(null); // Referencia para cerrar el menú al hacer click fuera
   const cobranzasFilesInputRef = useRef(null);
   const [cobranzasFiles, setCobranzasFiles] = useState([]); // hasta 10 archivos
   const addCobranzasFiles = (fileList) => {
@@ -157,6 +166,168 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
   // Referencia para el área de impresión principal del proyecto
   const printAreaRef = useRef(null);
   
+  // Handler para imprimir usando window.print()
+  const handlePrintWindow = () => {
+    // Convertir inputs y selects a texto visible antes de imprimir
+    const convertInputsToText = () => {
+      const printArea = document.getElementById('print-area');
+      if (!printArea) return;
+
+      // Convertir inputs a spans con el valor
+      const inputs = printArea.querySelectorAll('input[type="text"], input[type="number"]');
+      inputs.forEach(input => {
+        const span = document.createElement('span');
+        span.textContent = input.value || input.placeholder || '';
+        span.className = input.className;
+        span.style.display = 'inline-block';
+        span.style.width = input.offsetWidth + 'px';
+        span.style.padding = window.getComputedStyle(input).padding;
+        span.style.margin = window.getComputedStyle(input).margin;
+        span.style.fontSize = window.getComputedStyle(input).fontSize;
+        span.style.fontWeight = window.getComputedStyle(input).fontWeight;
+        span.style.color = window.getComputedStyle(input).color;
+        if (input.parentNode) {
+          input.parentNode.replaceChild(span, input);
+        }
+      });
+
+      // Convertir selects a spans con el texto seleccionado
+      const selects = printArea.querySelectorAll('select');
+      selects.forEach(select => {
+        const span = document.createElement('span');
+        const selectedOption = select.options[select.selectedIndex];
+        span.textContent = selectedOption ? selectedOption.text : '';
+        span.className = select.className;
+        span.style.display = 'inline-block';
+        span.style.width = select.offsetWidth + 'px';
+        span.style.padding = window.getComputedStyle(select).padding;
+        span.style.margin = window.getComputedStyle(select).margin;
+        span.style.fontSize = window.getComputedStyle(select).fontSize;
+        span.style.color = window.getComputedStyle(select).color;
+        if (select.parentNode) {
+          select.parentNode.replaceChild(span, select);
+        }
+      });
+    };
+
+    // Ocultar elementos no deseados antes de imprimir
+    const style = document.createElement('style');
+    style.id = 'print-styles';
+    style.innerHTML = `
+      @media print {
+        .no-print { display: none !important; }
+        body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        #print-area { 
+          display: flex !important;
+          flex-direction: row !important;
+          gap: 20px !important;
+          width: 100% !important;
+        }
+        .left-banner { display: none !important; }
+        .left-panel, .right-panel { 
+          width: auto !important;
+          flex-shrink: 0 !important;
+          page-break-inside: avoid !important;
+        }
+        button { display: none !important; }
+        
+        /* Asegurar que las tablas se muestren */
+        table { 
+          display: table !important;
+          border-collapse: collapse !important;
+          width: 100% !important;
+        }
+        table td, table th { 
+          display: table-cell !important;
+          visibility: visible !important;
+          opacity: 1 !important;
+          color: #000 !important;
+          padding: 2px 4px !important;
+          font-size: 11px !important;
+        }
+        
+        /* Asegurar que los valores se muestren */
+        .right-panel td:last-child,
+        .right-panel .print-value {
+          white-space: nowrap !important;
+          display: table-cell !important;
+          visibility: visible !important;
+          opacity: 1 !important;
+          color: #000 !important;
+          background-color: #fff !important;
+          content: "" !important;
+        }
+        
+        /* Asegurar que el contenido de las celdas sea visible */
+        .right-panel td * {
+          visibility: visible !important;
+          opacity: 1 !important;
+          color: #000 !important;
+          display: inline !important;
+        }
+        
+        input, select { 
+          border: none !important;
+          background: transparent !important;
+          -webkit-appearance: none !important;
+          appearance: none !important;
+          display: inline-block !important;
+          visibility: visible !important;
+          opacity: 1 !important;
+          color: #000 !important;
+        }
+        
+        /* Asegurar que todos los elementos de texto sean visibles */
+        td, th, span, div {
+          visibility: visible !important;
+          opacity: 1 !important;
+          color: inherit !important;
+        }
+        
+        /* Forzar visibilidad de contenido calculado */
+        .right-panel tbody tr td:last-child {
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+      }
+    `;
+    
+    // Convertir inputs antes de agregar estilos
+    convertInputsToText();
+    document.head.appendChild(style);
+    
+    // Esperar un momento y luego imprimir
+    setTimeout(() => {
+      window.print();
+      // Remover el estilo después de imprimir
+      setTimeout(() => {
+        const printStyle = document.getElementById('print-styles');
+        if (printStyle && document.head.contains(printStyle)) {
+          document.head.removeChild(printStyle);
+        }
+        // Recargar la página para restaurar los inputs (opcional, o puedes restaurarlos manualmente)
+        // window.location.reload();
+      }, 1000);
+    }, 200);
+  };
+
+  // Cerrar el menú PDF cuando se hace clic fuera
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (pdfMenuRef.current && !pdfMenuRef.current.contains(event.target)) {
+        setPdfMenuOpen(false);
+      }
+    };
+
+    if (pdfMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [pdfMenuOpen]);
+  
   // Handler para generar PDF del proyecto completo (tabla de categorías + análisis financiero)
   const handlePrintProyecto = () => {
     // Buscar los dos cuadros principales directamente
@@ -165,9 +336,21 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     
     if (!leftPanel || !rightPanel) {
       alert('Error: No se encontraron los cuadros para generar el PDF.');
-      console.error('Elementos no encontrados:', { leftPanel: !!leftPanel, rightPanel: !!rightPanel });
+      console.error('Elementos no encontrados:', { 
+        leftPanel: !!leftPanel, 
+        rightPanel: !!rightPanel,
+        allLeftPanels: document.querySelectorAll('.left-panel').length,
+        allRightPanels: document.querySelectorAll('.right-panel').length
+      });
       return;
     }
+
+    console.log('🔍 Elementos encontrados:', {
+      leftPanelHeight: leftPanel.scrollHeight,
+      rightPanelHeight: rightPanel.scrollHeight,
+      leftPanelHasTable: !!leftPanel.querySelector('table'),
+      rightPanelHasTable: !!rightPanel.querySelector('table')
+    });
 
     // Cargar html2pdf.js desde CDN si no está disponible
     const loadHtml2Pdf = () => {
@@ -186,38 +369,69 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     };
 
     loadHtml2Pdf().then((html2pdf) => {
-      // Clonar los dos cuadros principales
+      // Clonar los dos cuadros principales (deep clone para incluir todos los estilos)
       const cloneLeftPanel = leftPanel.cloneNode(true);
       const cloneRightPanel = rightPanel.cloneNode(true);
       
-      // Ocultar botones en ambos clones
+      // Ocultar botones y elementos no necesarios en ambos clones
       [cloneLeftPanel, cloneRightPanel].forEach((clone) => {
+        // Ocultar botones
         const buttons = clone.querySelectorAll('button');
         buttons.forEach((btn) => {
           btn.style.display = 'none';
+          btn.remove();
         });
         
-        // Ocultar inputs de edición y mostrar solo valores
+        // Ocultar inputs de edición y reemplazar con spans que muestren el valor
         const inputs = clone.querySelectorAll('input');
         inputs.forEach((input) => {
-          if (input.type === 'text' && input.value) {
-            // Crear un span con el valor para mostrar en PDF
+          if (input.type === 'text' || input.type === 'number') {
             const span = document.createElement('span');
-            span.textContent = input.value;
+            span.textContent = input.value || input.placeholder || '';
             span.className = input.className;
             span.style.display = 'inline-block';
+            span.style.width = input.style.width || 'auto';
+            span.style.padding = input.style.padding || '0';
+            span.style.margin = input.style.margin || '0';
+            if (input.parentNode) {
             input.parentNode.replaceChild(span, input);
+            }
           } else {
             input.style.display = 'none';
           }
         });
+
+        // Ocultar selects y mostrar su valor seleccionado
+        const selects = clone.querySelectorAll('select');
+        selects.forEach((select) => {
+          const span = document.createElement('span');
+          const selectedOption = select.options[select.selectedIndex];
+          span.textContent = selectedOption ? selectedOption.text : '';
+          span.className = select.className;
+          span.style.display = 'inline-block';
+          if (select.parentNode) {
+            select.parentNode.replaceChild(span, select);
+          }
+        });
+
+        // Asegurar que todos los elementos sean visibles
+        const allElements = clone.querySelectorAll('*');
+        allElements.forEach((el) => {
+          if (el.style) {
+            el.style.visibility = 'visible';
+            el.style.opacity = '1';
+            if (el.style.display === 'none' && !el.classList.contains('hidden')) {
+              el.style.display = '';
+            }
+          }
+        });
       });
 
-      // Crear un contenedor temporal para html2canvas
+      // Crear un contenedor temporal VISIBLE para html2canvas
       const printContainer = document.createElement('div');
       printContainer.id = 'pdf-container';
-      printContainer.style.position = 'absolute';
-      printContainer.style.left = '-9999px';
+      printContainer.style.position = 'fixed';
+      printContainer.style.left = '0';
       printContainer.style.top = '0';
       printContainer.style.width = '1200px';
       printContainer.style.backgroundColor = '#ffffff';
@@ -226,17 +440,27 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       printContainer.style.flexDirection = 'row';
       printContainer.style.gap = '20px';
       printContainer.style.alignItems = 'flex-start';
+      printContainer.style.zIndex = '99999';
+      printContainer.style.visibility = 'visible';
+      printContainer.style.opacity = '1';
+      printContainer.style.overflow = 'visible';
+      // Mover fuera de pantalla pero mantener visible para html2canvas
+      printContainer.style.transform = 'translateX(-10000px) translateY(0)';
       
-      // Aplicar estilos a los clones
+      // Aplicar estilos a los clones para asegurar visibilidad
       cloneLeftPanel.style.display = 'block';
       cloneLeftPanel.style.visibility = 'visible';
       cloneLeftPanel.style.opacity = '1';
       cloneLeftPanel.style.flexShrink = '0';
+      cloneLeftPanel.style.width = 'auto';
+      cloneLeftPanel.style.height = 'auto';
       
       cloneRightPanel.style.display = 'block';
       cloneRightPanel.style.visibility = 'visible';
       cloneRightPanel.style.opacity = '1';
       cloneRightPanel.style.flexShrink = '0';
+      cloneRightPanel.style.width = 'auto';
+      cloneRightPanel.style.height = 'auto';
       
       printContainer.appendChild(cloneLeftPanel);
       printContainer.appendChild(cloneRightPanel);
@@ -246,24 +470,45 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       console.log('📄 Contenido preparado para PDF:', {
         tieneLeftPanel: !!cloneLeftPanel,
         tieneRightPanel: !!cloneRightPanel,
+        leftPanelHeight: cloneLeftPanel.scrollHeight,
+        rightPanelHeight: cloneRightPanel.scrollHeight,
         alturaContainer: printContainer.scrollHeight,
-        anchoContainer: printContainer.scrollWidth
+        anchoContainer: printContainer.scrollWidth,
+        leftPanelHasTable: !!cloneLeftPanel.querySelector('table'),
+        rightPanelHasTable: !!cloneRightPanel.querySelector('table')
       });
 
-      // Esperar un momento para que se renderice y verificar que tenga contenido
+      // Esperar a que se renderice completamente
       setTimeout(() => {
         // Verificar que el contenedor tenga contenido antes de generar el PDF
         const hasTable = printContainer.querySelector('table');
         const hasRightPanel = printContainer.querySelector('.right-panel');
+        const leftTable = cloneLeftPanel.querySelector('table');
+        const rightTable = cloneRightPanel.querySelector('table');
         
-        if (!hasTable || !hasRightPanel) {
+        console.log('🔍 Verificación antes de generar PDF:', {
+          hasTable: !!hasTable,
+          hasRightPanel: !!hasRightPanel,
+          leftTableRows: leftTable ? leftTable.querySelectorAll('tr').length : 0,
+          rightTableRows: rightTable ? rightTable.querySelectorAll('tr').length : 0,
+          containerHeight: printContainer.scrollHeight
+        });
+        
+        if (!hasTable || !hasRightPanel || !leftTable || !rightTable) {
           alert('Error: No se pudo capturar el contenido completo. Por favor, intenta nuevamente.');
+          if (document.body.contains(printContainer)) {
           document.body.removeChild(printContainer);
+          }
           return;
         }
         
         // Asegurar que el contenedor tenga altura suficiente
-        const containerHeight = Math.max(printContainer.scrollHeight, 800);
+        const containerHeight = Math.max(
+          printContainer.scrollHeight, 
+          cloneLeftPanel.scrollHeight, 
+          cloneRightPanel.scrollHeight, 
+          800
+        );
         printContainer.style.height = `${containerHeight}px`;
         
         const opt = {
@@ -288,6 +533,37 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                 clonedContainer.style.flexDirection = 'row';
                 clonedContainer.style.visibility = 'visible';
                 clonedContainer.style.opacity = '1';
+                clonedContainer.style.width = '1200px';
+                clonedContainer.style.backgroundColor = '#ffffff';
+                
+                // Asegurar que los paneles sean visibles
+                const clonedLeft = clonedContainer.querySelector('.left-panel');
+                const clonedRight = clonedContainer.querySelector('.right-panel');
+                if (clonedLeft) {
+                  clonedLeft.style.visibility = 'visible';
+                  clonedLeft.style.opacity = '1';
+                  clonedLeft.style.display = 'block';
+                }
+                if (clonedRight) {
+                  clonedRight.style.visibility = 'visible';
+                  clonedRight.style.opacity = '1';
+                  clonedRight.style.display = 'block';
+                }
+
+                // Asegurar que las tablas sean visibles
+                const tables = clonedContainer.querySelectorAll('table');
+                tables.forEach(table => {
+                  table.style.visibility = 'visible';
+                  table.style.opacity = '1';
+                  table.style.display = 'table';
+                  
+                  const cells = table.querySelectorAll('td, th');
+                  cells.forEach(cell => {
+                    cell.style.visibility = 'visible';
+                    cell.style.opacity = '1';
+                    cell.style.display = 'table-cell';
+                  });
+                });
               }
             }
           },
@@ -295,19 +571,23 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
           pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
         };
 
+        console.log('🔄 Generando PDF del proyecto...');
+
         html2pdf().set(opt).from(printContainer).save().then(() => {
           // Limpiar el contenedor temporal
+          if (document.body.contains(printContainer)) {
           document.body.removeChild(printContainer);
+          }
           console.log('✅ PDF del proyecto generado exitosamente');
         }).catch((error) => {
           console.error('❌ Error al generar PDF:', error);
-          alert('Error al generar el PDF: ' + error.message);
+          alert('Error al generar el PDF: ' + error.message + '\n\nRevisa la consola para más detalles.');
           // Limpiar el contenedor temporal en caso de error
           if (document.body.contains(printContainer)) {
             document.body.removeChild(printContainer);
           }
         });
-      }, 1000); // Aumentar el tiempo de espera para asegurar que se renderice
+      }, 1500); // Aumentar el tiempo de espera para asegurar que se renderice
     }).catch((error) => {
       console.error('❌ Error al cargar html2pdf.js:', error);
       alert('Error al cargar la librería de PDF. Por favor, intenta nuevamente.');
@@ -316,12 +596,124 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
 
   // Referencia y handler para imprimir SOLO el popup de Cobranzas
   const cobranzasPopupRef = useRef(null);
-  const handlePrintCobranzas = () => {
+  const cobranzasPreviewRef = useRef(null);
+  
+  // Función para preparar el contenido para PDF (sin generar aún)
+  const prepareCobranzasContent = () => {
     const node = cobranzasPopupRef.current;
     if (!node) {
       alert('Error: No se encontró el contenido para generar el PDF.');
+      return null;
+    }
+
+    // Clonar el contenido del popup (deep clone para incluir todos los estilos)
+    const clone = node.cloneNode(true);
+    
+    // Ocultar botones en el clon
+    const cloneButtons = clone.querySelectorAll('button');
+    cloneButtons.forEach((btn) => {
+      const btnText = btn.textContent || '';
+      const hasSvg = btn.querySelector('svg');
+      if (btnText.includes('Generar PDF') || btnText.includes('Vista Previa') || btnText.includes('Cerrar') || hasSvg) {
+        btn.style.display = 'none';
+        btn.remove(); // Eliminar completamente en lugar de solo ocultar
+      }
+    });
+
+    // Ocultar el input de archivos también
+    const fileInputs = clone.querySelectorAll('input[type="file"]');
+    fileInputs.forEach(input => {
+      input.style.display = 'none';
+      input.remove();
+    });
+
+    // Ocultar la sección de adjuntos en la vista previa (solo mostrar la tabla)
+    const adjuntosSection = clone.querySelector('.bg-green-700');
+    if (adjuntosSection) {
+      const adjuntosContainer = adjuntosSection.closest('.mt-3');
+      if (adjuntosContainer) {
+        adjuntosContainer.style.display = 'none';
+      }
+    }
+
+    // Ocultar el footer con botones
+    const footer = clone.querySelector('.bg-gray-50');
+    if (footer && footer.textContent.includes('Cerrar')) {
+      footer.style.display = 'none';
+    }
+
+    // Aplicar estilos al clon para que se vea correctamente
+    clone.style.position = 'relative';
+    clone.style.transform = 'none';
+    clone.style.top = 'auto';
+    clone.style.left = 'auto';
+    clone.style.margin = '0';
+    clone.style.width = '100%';
+    clone.style.maxWidth = 'none';
+    clone.style.maxHeight = 'none';
+    clone.style.overflow = 'visible';
+    clone.style.border = 'none';
+    clone.style.boxShadow = 'none';
+    clone.style.backgroundColor = '#ffffff';
+
+    // Asegurar que los inputs se vean como texto estático en la vista previa
+    const inputs = clone.querySelectorAll('input');
+    inputs.forEach(input => {
+      input.style.pointerEvents = 'none';
+      input.style.backgroundColor = 'transparent';
+      input.style.border = 'none';
+      input.readOnly = true;
+    });
+
+    return clone;
+  };
+
+  // Mostrar vista previa antes de generar PDF
+  const handlePreviewCobranzas = () => {
+    const content = prepareCobranzasContent();
+    if (content) {
+      setCobranzasPreviewOpen(true);
+      // Esperar a que el modal se renderice antes de insertar el contenido
+      setTimeout(() => {
+        const previewContainer = cobranzasPreviewRef.current;
+        if (previewContainer) {
+          previewContainer.innerHTML = '';
+          previewContainer.appendChild(content);
+          
+          // Forzar re-renderizado para asegurar que los estilos se apliquen
+          previewContainer.offsetHeight;
+          
+          // Aplicar estilos adicionales después de insertar
+          const tables = previewContainer.querySelectorAll('table');
+          tables.forEach(table => {
+            table.style.width = '100%';
+            table.style.borderCollapse = 'collapse';
+          });
+        }
+      }, 150);
+    }
+  };
+
+  // Generar PDF desde la vista previa
+  const handleGeneratePDFFromPreview = () => {
+    // Usar el contenido de la vista previa que ya está visible y renderizado
+    const previewContainer = cobranzasPreviewRef.current;
+    if (!previewContainer) {
+      alert('Error: No se encontró el contenido de vista previa.');
+      setGeneratingPDF(false);
       return;
     }
+
+    // Verificar que la vista previa tenga contenido
+    const previewTable = previewContainer.querySelector('table');
+    if (!previewTable) {
+      alert('Error: La vista previa no tiene contenido. Por favor, cierra y vuelve a abrir la vista previa.');
+      setGeneratingPDF(false);
+      return;
+    }
+
+    // Mostrar indicador de carga
+    setGeneratingPDF(true);
 
     // Cargar html2pdf.js desde CDN si no está disponible
     const loadHtml2Pdf = () => {
@@ -340,29 +732,26 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     };
 
     loadHtml2Pdf().then((html2pdf) => {
-      // Clonar el contenido del popup para evitar problemas con elementos fixed
-      const clone = node.cloneNode(true);
-      
-      // Ocultar botones en el clon
-      const cloneButtons = clone.querySelectorAll('button');
-      cloneButtons.forEach((btn) => {
-        const btnText = btn.textContent || '';
-        const hasSvg = btn.querySelector('svg');
-        if (btnText.includes('Generar PDF') || btnText.includes('Cerrar') || hasSvg) {
-          btn.style.display = 'none';
-        }
-      });
-
-      // Crear un contenedor temporal visible para html2canvas
+      // Usar directamente el contenedor de vista previa que ya está visible
+      // Crear un wrapper para asegurar que html2canvas lo capture correctamente
       const printContainer = document.createElement('div');
+      printContainer.id = 'pdf-cobranzas-container';
       printContainer.style.position = 'absolute';
-      printContainer.style.left = '-9999px';
+      printContainer.style.left = '0';
       printContainer.style.top = '0';
       printContainer.style.width = '760px';
       printContainer.style.backgroundColor = '#ffffff';
       printContainer.style.padding = '20px';
+      printContainer.style.zIndex = '99999';
+      printContainer.style.visibility = 'visible';
+      printContainer.style.opacity = '1';
+      printContainer.style.display = 'block';
+      printContainer.style.overflow = 'visible';
       
-      // Aplicar estilos al clon para que se vea correctamente
+      // Clonar el contenido de la vista previa (que ya está renderizado y visible)
+      const clone = previewContainer.cloneNode(true);
+      
+      // Aplicar estilos al clon para asegurar visibilidad
       clone.style.position = 'relative';
       clone.style.transform = 'none';
       clone.style.top = 'auto';
@@ -372,12 +761,56 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       clone.style.maxWidth = 'none';
       clone.style.maxHeight = 'none';
       clone.style.overflow = 'visible';
+      clone.style.backgroundColor = '#ffffff';
+      clone.style.visibility = 'visible';
+      clone.style.opacity = '1';
+      clone.style.display = 'block';
+      
+      // Asegurar que todos los elementos hijos sean visibles
+      const allChildren = clone.querySelectorAll('*');
+      allChildren.forEach(child => {
+        child.style.visibility = 'visible';
+        child.style.opacity = '1';
+        if (child.style.display === 'none') {
+          child.style.display = '';
+        }
+      });
       
       printContainer.appendChild(clone);
+      // Mover fuera de pantalla pero mantener en el DOM
+      printContainer.style.left = '-10000px';
       document.body.appendChild(printContainer);
 
-      // Esperar un momento para que se renderice
+      // Esperar a que se renderice completamente
       setTimeout(() => {
+        // Asegurar que el contenedor tenga el tamaño correcto
+        const containerHeight = Math.max(printContainer.scrollHeight, clone.scrollHeight, 600);
+        printContainer.style.height = `${containerHeight}px`;
+        
+        // Verificar que el contenido tenga elementos visibles
+        const hasTable = printContainer.querySelector('table');
+        const hasGreenHeader = printContainer.querySelector('.bg-green-600');
+        const tableRows = hasTable ? hasTable.querySelectorAll('tr').length : 0;
+        
+        console.log('🔍 Verificando contenido para PDF:', {
+          containerHeight: printContainer.scrollHeight,
+          cloneHeight: clone.scrollHeight,
+          containerWidth: printContainer.scrollWidth,
+          hasTable: !!hasTable,
+          hasGreenHeader: !!hasGreenHeader,
+          tableRows: tableRows,
+          tableHTML: hasTable ? hasTable.innerHTML.substring(0, 300) : 'No table'
+        });
+
+        if (!hasTable || tableRows === 0) {
+          alert('Error: El contenido para el PDF está vacío. Por favor, cierra y vuelve a abrir la vista previa.');
+          if (document.body.contains(printContainer)) {
+            document.body.removeChild(printContainer);
+          }
+          setGeneratingPDF(false);
+          return;
+        }
+
         const opt = {
           margin: [10, 10, 10, 10],
           filename: `Cobranzas_Proyecto_${projectData.nombreProyecto || 'Proyecto'}_${new Date().toISOString().split('T')[0]}.pdf`,
@@ -385,34 +818,421 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
           html2canvas: { 
             scale: 2, 
             useCORS: true,
-            logging: true,
+            logging: true, // Habilitar logging para debugging
             backgroundColor: '#ffffff',
             allowTaint: false,
             scrollX: 0,
             scrollY: 0,
             windowWidth: 760,
-            windowHeight: clone.scrollHeight
+            windowHeight: containerHeight,
+            onclone: (clonedDoc) => {
+              // Asegurar que todos los estilos se apliquen correctamente en el clon de html2canvas
+              const clonedContainer = clonedDoc.querySelector('#pdf-cobranzas-container') || 
+                                     clonedDoc.querySelector('#cobranzas-preview-content') ||
+                                     clonedDoc.body.firstElementChild;
+              if (clonedContainer) {
+                clonedContainer.style.width = '760px';
+                clonedContainer.style.backgroundColor = '#ffffff';
+                clonedContainer.style.position = 'relative';
+                clonedContainer.style.transform = 'none';
+                clonedContainer.style.left = '0';
+                clonedContainer.style.top = '0';
+                clonedContainer.style.visibility = 'visible';
+                clonedContainer.style.opacity = '1';
+                clonedContainer.style.display = 'block';
+                
+                // Asegurar que las tablas se vean correctamente
+                const tables = clonedContainer.querySelectorAll('table');
+                tables.forEach(table => {
+                  table.style.width = '100%';
+                  table.style.borderCollapse = 'collapse';
+                  table.style.visibility = 'visible';
+                  table.style.display = 'table';
+                  table.style.opacity = '1';
+                  
+                  // Asegurar que las celdas sean visibles
+                  const cells = table.querySelectorAll('td, th');
+                  cells.forEach(cell => {
+                    cell.style.visibility = 'visible';
+                    cell.style.opacity = '1';
+                    cell.style.display = 'table-cell';
+                  });
+                });
+
+                // Asegurar que todos los elementos sean visibles
+                const allElements = clonedContainer.querySelectorAll('*');
+                allElements.forEach(el => {
+                  if (el.style) {
+                    el.style.visibility = 'visible';
+                    el.style.opacity = '1';
+                    if (el.style.display === 'none') {
+                      el.style.display = '';
+                    }
+                  }
+                });
+              }
+            }
           },
           jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
           pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
         };
 
+        console.log('🔄 Generando PDF...', {
+          containerHeight: printContainer.scrollHeight,
+          containerWidth: printContainer.scrollWidth,
+          hasTable: !!hasTable,
+          tableContent: hasTable ? hasTable.innerHTML.substring(0, 200) : 'No table'
+        });
+
         html2pdf().set(opt).from(printContainer).save().then(() => {
           // Limpiar el contenedor temporal
+          if (document.body.contains(printContainer)) {
           document.body.removeChild(printContainer);
+          }
+          setGeneratingPDF(false);
+          setCobranzasPreviewOpen(false);
           console.log('✅ PDF generado exitosamente');
         }).catch((error) => {
           console.error('❌ Error al generar PDF:', error);
-          alert('Error al generar el PDF: ' + error.message);
+          setGeneratingPDF(false);
+          alert('Error al generar el PDF: ' + error.message + '\n\nPor favor, verifica que el contenido se vea correctamente en la vista previa.');
           // Limpiar el contenedor temporal en caso de error
           if (document.body.contains(printContainer)) {
             document.body.removeChild(printContainer);
           }
         });
-      }, 500);
+      }, 1500); // Tiempo suficiente para asegurar renderizado completo
     }).catch((error) => {
       console.error('❌ Error al cargar html2pdf.js:', error);
-      alert('Error al cargar la librería de PDF. Por favor, intenta nuevamente.');
+      setGeneratingPDF(false);
+      alert('Error al cargar la librería de PDF. Por favor, verifica tu conexión a internet e intenta nuevamente.');
+    });
+  };
+
+  // Función para imprimir el popup de cobranzas usando window.print()
+  const handlePrintCobranzasWindow = () => {
+    // Convertir inputs a texto visible antes de imprimir
+    const convertCobranzasInputsToText = () => {
+      const popup = cobranzasPopupRef.current;
+      if (!popup) return;
+
+      // Convertir inputs de fecha a texto
+      const dateInputs = popup.querySelectorAll('input[type="date"]');
+      dateInputs.forEach(input => {
+        const span = document.createElement('span');
+        span.textContent = input.value || 'dd/mm/aaaa';
+        span.className = input.className;
+        span.style.display = 'inline-block';
+        span.style.width = input.offsetWidth + 'px';
+        span.style.padding = window.getComputedStyle(input).padding;
+        span.style.textAlign = 'center';
+        if (input.parentNode) {
+          input.parentNode.replaceChild(span, input);
+        }
+      });
+
+      // Convertir inputs de monto a texto
+      const montoInputs = popup.querySelectorAll('input[type="text"]');
+      montoInputs.forEach(input => {
+        const span = document.createElement('span');
+        span.textContent = input.value || 'S/0.00';
+        span.className = input.className;
+        span.style.display = 'inline-block';
+        span.style.width = input.offsetWidth + 'px';
+        span.style.padding = window.getComputedStyle(input).padding;
+        if (input.parentNode) {
+          input.parentNode.replaceChild(span, input);
+        }
+      });
+    };
+
+    // Ocultar elementos no deseados antes de imprimir
+    const style = document.createElement('style');
+    style.id = 'print-cobranzas-styles';
+    style.innerHTML = `
+      @media print {
+        body * {
+          visibility: hidden;
+        }
+        #cobranzas-print-area,
+        #cobranzas-print-area * {
+          visibility: visible;
+        }
+        #cobranzas-print-area {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 100%;
+        }
+        .no-print-cobranzas { display: none !important; }
+        button { display: none !important; }
+        input[type="file"] { display: none !important; }
+      }
+    `;
+    
+    // Convertir inputs antes de agregar estilos
+    convertCobranzasInputsToText();
+    
+    // Crear un área de impresión específica
+    const popup = cobranzasPopupRef.current;
+    if (popup) {
+      const printArea = popup.cloneNode(true);
+      printArea.id = 'cobranzas-print-area';
+      printArea.style.position = 'absolute';
+      printArea.style.left = '-10000px';
+      printArea.style.top = '0';
+      printArea.style.width = '760px';
+      printArea.style.backgroundColor = '#ffffff';
+      
+      // Ocultar botones en el clon
+      const buttons = printArea.querySelectorAll('button');
+      buttons.forEach(btn => btn.remove());
+      
+      // Ocultar inputs de archivos
+      const fileInputs = printArea.querySelectorAll('input[type="file"]');
+      fileInputs.forEach(input => input.remove());
+      
+      // Ocultar sección de adjuntos
+      const adjuntosSection = printArea.querySelector('.bg-green-700');
+      if (adjuntosSection) {
+        const adjuntosContainer = adjuntosSection.closest('.mt-3');
+        if (adjuntosContainer) {
+          adjuntosContainer.remove();
+        }
+      }
+      
+      document.body.appendChild(printArea);
+      document.head.appendChild(style);
+      
+      // Esperar un momento y luego imprimir
+      setTimeout(() => {
+        window.print();
+        // Limpiar después de imprimir
+        setTimeout(() => {
+          if (document.body.contains(printArea)) {
+            document.body.removeChild(printArea);
+          }
+          const printStyle = document.getElementById('print-cobranzas-styles');
+          if (printStyle && document.head.contains(printStyle)) {
+            document.head.removeChild(printStyle);
+          }
+          // Cerrar el popup después de imprimir
+          setCobranzasPopupOpen(false);
+        }, 1000);
+      }, 200);
+    }
+  };
+
+  // Función legacy para mantener compatibilidad
+  const handlePrintCobranzas = () => {
+    handlePrintCobranzasWindow();
+  };
+
+  // Generar PDF directamente desde el modal de cobranzas (sin vista previa)
+  const handleGeneratePDFDirect = () => {
+    const node = cobranzasPopupRef.current;
+    if (!node) {
+      alert('Error: No se encontró el contenido para generar el PDF.');
+      return;
+    }
+
+    // Mostrar indicador de carga
+    setGeneratingPDF(true);
+
+    // Cargar html2pdf.js desde CDN si no está disponible
+    const loadHtml2Pdf = () => {
+      return new Promise((resolve, reject) => {
+        if (window.html2pdf) {
+          resolve(window.html2pdf);
+          return;
+        }
+        
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+        script.onload = () => resolve(window.html2pdf);
+        script.onerror = reject;
+        document.head.appendChild(script);
+      });
+    };
+
+    loadHtml2Pdf().then((html2pdf) => {
+      // Preparar el contenido desde el popup original
+      const content = prepareCobranzasContent();
+      if (!content) {
+        setGeneratingPDF(false);
+        return;
+      }
+
+      // Crear un contenedor temporal VISIBLE para html2canvas
+      const printContainer = document.createElement('div');
+      printContainer.id = 'pdf-cobranzas-direct-container';
+      printContainer.style.position = 'fixed';
+      printContainer.style.left = '0';
+      printContainer.style.top = '0';
+      printContainer.style.width = '760px';
+      printContainer.style.backgroundColor = '#ffffff';
+      printContainer.style.padding = '20px';
+      printContainer.style.zIndex = '99999';
+      printContainer.style.visibility = 'visible';
+      printContainer.style.opacity = '1';
+      printContainer.style.display = 'block';
+      printContainer.style.overflow = 'visible';
+      
+      // Aplicar estilos al contenido clonado
+      content.style.position = 'relative';
+      content.style.transform = 'none';
+      content.style.top = 'auto';
+      content.style.left = 'auto';
+      content.style.margin = '0';
+      content.style.width = '100%';
+      content.style.maxWidth = 'none';
+      content.style.maxHeight = 'none';
+      content.style.overflow = 'visible';
+      content.style.backgroundColor = '#ffffff';
+      content.style.visibility = 'visible';
+      content.style.opacity = '1';
+      content.style.display = 'block';
+      
+      // Asegurar que todos los elementos hijos sean visibles
+      const allChildren = content.querySelectorAll('*');
+      allChildren.forEach(child => {
+        if (child.style) {
+          child.style.visibility = 'visible';
+          child.style.opacity = '1';
+          if (child.style.display === 'none') {
+            child.style.display = '';
+          }
+        }
+      });
+      
+      printContainer.appendChild(content);
+      // Mover fuera de pantalla pero mantener en el DOM y visible para html2canvas
+      printContainer.style.left = '-10000px';
+      document.body.appendChild(printContainer);
+
+      // Esperar a que se renderice completamente
+      setTimeout(() => {
+        // Asegurar que el contenedor tenga el tamaño correcto
+        const containerHeight = Math.max(printContainer.scrollHeight, content.scrollHeight, 600);
+        printContainer.style.height = `${containerHeight}px`;
+        
+        // Verificar que el contenido tenga elementos visibles
+        const hasTable = printContainer.querySelector('table');
+        const hasGreenHeader = printContainer.querySelector('.bg-green-600');
+        const tableRows = hasTable ? hasTable.querySelectorAll('tr').length : 0;
+        
+        console.log('🔍 Verificando contenido para PDF directo:', {
+          containerHeight: printContainer.scrollHeight,
+          contentHeight: content.scrollHeight,
+          containerWidth: printContainer.scrollWidth,
+          hasTable: !!hasTable,
+          hasGreenHeader: !!hasGreenHeader,
+          tableRows: tableRows,
+          tableHTML: hasTable ? hasTable.innerHTML.substring(0, 300) : 'No table'
+        });
+
+        if (!hasTable || tableRows === 0) {
+          alert('Error: El contenido para el PDF está vacío. Por favor, intenta nuevamente.');
+          if (document.body.contains(printContainer)) {
+            document.body.removeChild(printContainer);
+          }
+          setGeneratingPDF(false);
+          return;
+        }
+
+        const opt = {
+          margin: [10, 10, 10, 10],
+          filename: `Cobranzas_Proyecto_${projectData.nombreProyecto || 'Proyecto'}_${new Date().toISOString().split('T')[0]}.pdf`,
+          image: { type: 'jpeg', quality: 0.98 },
+          html2canvas: { 
+            scale: 2, 
+            useCORS: true,
+            logging: true, // Habilitar logging para debugging
+            backgroundColor: '#ffffff',
+            allowTaint: false,
+            scrollX: 0,
+            scrollY: 0,
+            windowWidth: 760,
+            windowHeight: containerHeight,
+            onclone: (clonedDoc) => {
+              // Asegurar que todos los estilos se apliquen correctamente en el clon de html2canvas
+              const clonedContainer = clonedDoc.querySelector('#pdf-cobranzas-direct-container') || 
+                                     clonedDoc.body.firstElementChild;
+              if (clonedContainer) {
+                clonedContainer.style.width = '760px';
+                clonedContainer.style.backgroundColor = '#ffffff';
+                clonedContainer.style.position = 'relative';
+                clonedContainer.style.transform = 'none';
+                clonedContainer.style.left = '0';
+                clonedContainer.style.top = '0';
+                clonedContainer.style.visibility = 'visible';
+                clonedContainer.style.opacity = '1';
+                clonedContainer.style.display = 'block';
+                
+                // Asegurar que las tablas se vean correctamente
+                const tables = clonedContainer.querySelectorAll('table');
+                tables.forEach(table => {
+                  table.style.width = '100%';
+                  table.style.borderCollapse = 'collapse';
+                  table.style.visibility = 'visible';
+                  table.style.display = 'table';
+                  table.style.opacity = '1';
+                  
+                  // Asegurar que las celdas sean visibles
+                  const cells = table.querySelectorAll('td, th');
+                  cells.forEach(cell => {
+                    cell.style.visibility = 'visible';
+                    cell.style.opacity = '1';
+                    cell.style.display = 'table-cell';
+                  });
+                });
+
+                // Asegurar que todos los elementos sean visibles
+                const allElements = clonedContainer.querySelectorAll('*');
+                allElements.forEach(el => {
+                  if (el.style) {
+                    el.style.visibility = 'visible';
+                    el.style.opacity = '1';
+                    if (el.style.display === 'none') {
+                      el.style.display = '';
+                    }
+                  }
+                });
+              }
+            }
+          },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+          pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+        };
+
+        console.log('🔄 Generando PDF directo...', {
+          containerHeight: printContainer.scrollHeight,
+          containerWidth: printContainer.scrollWidth,
+          hasTable: !!hasTable,
+          tableContent: hasTable ? hasTable.innerHTML.substring(0, 200) : 'No table'
+        });
+
+        html2pdf().set(opt).from(printContainer).save().then(() => {
+          // Limpiar el contenedor temporal
+          if (document.body.contains(printContainer)) {
+            document.body.removeChild(printContainer);
+          }
+          setGeneratingPDF(false);
+          console.log('✅ PDF generado exitosamente');
+        }).catch((error) => {
+          console.error('❌ Error al generar PDF:', error);
+          setGeneratingPDF(false);
+          alert('Error al generar el PDF: ' + error.message + '\n\nIntenta usar "Vista Previa" primero para verificar el contenido.');
+          // Limpiar el contenedor temporal en caso de error
+          if (document.body.contains(printContainer)) {
+            document.body.removeChild(printContainer);
+          }
+        });
+      }, 1500); // Tiempo suficiente para asegurar renderizado completo
+    }).catch((error) => {
+      console.error('❌ Error al cargar html2pdf.js:', error);
+      setGeneratingPDF(false);
+      alert('Error al cargar la librería de PDF. Por favor, verifica tu conexión a internet e intenta nuevamente.');
     });
   };
 
@@ -739,15 +1559,81 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
 
     try {
       setProjectData(prev => {
-        const mappedCategorias = (project.categorias || []).map(cat => ({
-          id: cat.id,
-          nombre: cat.nombre || '',
-          tipo: cat.tipo || '',
-          presupuestoDelProyecto: formatMoney(cat.presupuestoDelProyecto || 0),
-          contratoProvedYServ: formatMoney(cat.contratoProvedYServ || 0),
-          registroEgresos: formatMoney(cat.registroEgresos || 0),
-          saldosPorCancelar: formatMoney(cat.saldosPorCancelar || 0)
-        }));
+        // ⚡ Asegurar que siempre tengamos las 24 categorías por defecto
+        let categoriasToMap = project.categorias || [];
+        
+        // Si no hay categorías o no son 24, inicializar con las categorías por defecto
+        if (!Array.isArray(categoriasToMap) || categoriasToMap.length !== 24) {
+          console.log(`🔧 Inicializando categorías faltantes para proyecto ${projectNumber}`);
+          // Obtener categorías por defecto desde projectDataService
+          const defaultCategories = projectDataService.getInitialProjects()[1].categorias;
+          categoriasToMap = [...defaultCategories];
+          
+          // Si el proyecto tiene algunas categorías, intentar preservarlas
+          if (Array.isArray(project.categorias) && project.categorias.length > 0) {
+            // Mapear las categorías existentes por nombre
+            const existingCategoriesMap = new Map();
+            project.categorias.forEach(cat => {
+              if (cat.nombre) {
+                existingCategoriesMap.set(cat.nombre.toLowerCase().trim(), cat);
+              }
+            });
+            
+            // Actualizar las categorías por defecto con los valores existentes
+            categoriasToMap = defaultCategories.map(defaultCat => {
+              const existing = existingCategoriesMap.get(defaultCat.nombre.toLowerCase().trim());
+              return existing ? { ...defaultCat, ...existing } : defaultCat;
+            });
+          }
+        }
+        
+        // 🔒 PRESERVAR valores editados por el usuario (SISTEMA ROBUSTO)
+        const mappedCategorias = categoriasToMap.map(cat => {
+          // ⚡ SOLO usar ID para identificar categorías (NO usar nombre como fallback para evitar propagación)
+          // Esto asegura que cada fila sea independiente, incluso si tienen el mismo nombre
+          const prevCat = prev.categorias?.find(pc => String(pc.id) === String(cat.id));
+          
+          // Parsear valores del servicio (pueden venir como número o string formateado)
+          const presupuestoServicio = parseMonetary(cat.presupuestoDelProyecto || 0);
+          const contratoServicio = parseMonetary(cat.contratoProvedYServ || 0);
+          const egresosServicio = parseMonetary(cat.registroEgresos || 0);
+          const saldosServicio = parseMonetary(cat.saldosPorCancelar || 0);
+          
+          // Parsear valores del estado previo
+          const presupuestoPrev = prevCat ? parseMonetary(prevCat.presupuestoDelProyecto || 0) : 0;
+          const contratoPrev = prevCat ? parseMonetary(prevCat.contratoProvedYServ || 0) : 0;
+          const egresosPrev = prevCat ? parseMonetary(prevCat.registroEgresos || 0) : 0;
+          const saldosPrev = prevCat ? parseMonetary(prevCat.saldosPorCancelar || 0) : 0;
+          
+          // 🔒 VERIFICAR SI EL USUARIO EDITÓ ESTOS VALORES (prioridad absoluta)
+          const presupuestoEditado = userEditedValuesRef.current.get(`${cat.id}-presupuestoDelProyecto`);
+          const contratoEditado = userEditedValuesRef.current.get(`${cat.id}-contratoProvedYServ`);
+          const egresosEditado = userEditedValuesRef.current.get(`${cat.id}-registroEgresos`);
+          const saldosEditado = userEditedValuesRef.current.get(`${cat.id}-saldosPorCancelar`);
+          
+          // ⚡ LÓGICA DE PRESERVACIÓN (en orden de prioridad):
+          // 1. Si el usuario editó el valor → SIEMPRE usar el valor editado
+          // 2. Si el valor previo > 0 → mantenerlo (usuario lo escribió antes)
+          // 3. Solo usar el valor del servicio si no hay valor previo ni editado
+          const presupuestoFinal = presupuestoEditado !== undefined ? presupuestoEditado : 
+                                   (presupuestoPrev > 0 ? presupuestoPrev : presupuestoServicio);
+          const contratoFinal = contratoEditado !== undefined ? contratoEditado : 
+                               (contratoPrev > 0 ? contratoPrev : contratoServicio);
+          const egresosFinal = egresosEditado !== undefined ? egresosEditado : 
+                             (egresosPrev > 0 ? egresosPrev : egresosServicio);
+          const saldosFinal = saldosEditado !== undefined ? saldosEditado : 
+                            (saldosPrev > 0 ? saldosPrev : saldosServicio);
+          
+          return {
+            id: cat.id,
+            nombre: cat.nombre || '',
+            tipo: cat.tipo || '',
+            presupuestoDelProyecto: formatMoney(presupuestoFinal),
+            contratoProvedYServ: formatMoney(contratoFinal),
+            registroEgresos: formatMoney(egresosFinal),
+            saldosPorCancelar: formatMoney(saldosFinal)
+          };
+        });
 
         return {
           ...prev,
@@ -765,10 +1651,18 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
           categorias: mappedCategorias
         };
       });
+      
+      // ⚡ Si el proyecto no tenía categorías, actualizarlo en el servicio
+      if (!project.categorias || project.categorias.length !== 24) {
+        const defaultCategories = projectDataService.getInitialProjects()[1].categorias;
+        if (updateField) {
+          updateField('categorias', defaultCategories);
+        }
+      }
     } catch (e) {
       console.warn('Error sincronizando projectData desde servicio', e);
     }
-  }, [project]);
+  }, [project, projectNumber, updateField, editingCells, editingMontoContrato]); // ⚡ Incluir editingCells para preservar valores
 
   // Helpers para persistencia local: soportar ambas claves usadas en el proyecto
   const saveProjectToLocalStores = (projNum, data) => {
@@ -849,15 +1743,19 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     const numericString = extractNumericValue(rawValue);
     const finalValue = parseFloat(numericString) || 0;
     
-    // Actualizar el campo modificado
+    // 🔒 MARCAR COMO EDITADO POR EL USUARIO (preservar siempre)
+    userEditedValuesRef.current.set(cellKey, finalValue);
+    console.log(`🔒 Valor marcado como editado por usuario: ${cellKey} = ${finalValue}`);
+    
+    // Actualizar el campo modificado PRIMERO en el servicio (para guardar en BD)
     if (updateCategory) {
       updateCategory(categoriaId, { [field]: finalValue });
     }
     
-    // Actualizar estado local
+    // Actualizar estado local INMEDIATAMENTE (para mostrar el valor formateado)
     const updatedCategorias = projectData.categorias.map(cat => {
       if (cat.id === categoriaId) {
-        const updatedCat = { ...cat, [field]: finalValue };
+        const updatedCat = { ...cat, [field]: formatMoney(finalValue) }; // ⚡ Formatear para mostrar correctamente
         
         // Si se actualizó presupuestoDelProyecto o registroEgresos, calcular saldosPorCancelar automáticamente
         // Solo calcular si hay un valor en "Registro Egresos"
@@ -871,9 +1769,9 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
             saldosCalculados = presupuesto - egresos;
           }
           
-          updatedCat.saldosPorCancelar = saldosCalculados;
+          updatedCat.saldosPorCancelar = formatMoney(saldosCalculados); // ⚡ Formatear para mostrar correctamente
           
-          // Actualizar también en el servicio
+          // Actualizar también en el servicio (guardar número sin formato)
           if (updateCategory) {
             updateCategory(categoriaId, { saldosPorCancelar: saldosCalculados });
           }
@@ -1144,6 +2042,10 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       const n = String(nombre || '').toLowerCase();
       if (!n) return 'text-black';
       
+      // Púrpura/Morado (indigo): Comision, Ayudante
+      if (n.includes('comision') || n.includes('comisión')) return 'text-indigo-600';
+      if (n.includes('ayudante')) return 'text-indigo-600';
+      
       // Naranja: Melamina y Servicios, Melamina High Gloss (ambas con el mismo color)
       if (n.includes('melamina y servicios') || n === 'melamina y servicios') return 'text-orange-600';
       if (n.includes('melamina high gloss') || n === 'melamina high gloss') return 'text-orange-600';
@@ -1284,7 +2186,14 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
   const analisisCalculado = calcularAnalisisFinanciero();
 
   // 🔄 AUTO-SYNC: Actualizar campos calculados cuando cambien las categorías
+  // ⚡ PROTECCIÓN: NO ejecutar si hay celdas siendo editadas (evitar sobrescribir valores del usuario)
   useEffect(() => {
+    // ⚡ Si hay celdas siendo editadas, NO ejecutar este efecto (preservar valores del usuario)
+    const hayCeldasEditando = Object.keys(editingCells).length > 0;
+    if (hayCeldasEditando) {
+      return; // Salir temprano para no sobrescribir valores en edición
+    }
+    
     if (projectData.categorias && updateField) {
       // 🧮 CALCULAR TOTALES AUTOMÁTICAMENTE PARA COLUMNAS DE LA DERECHA
       // Usar la función que excluye las filas marcadas en rojo
@@ -1326,7 +2235,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
             
             return {
               ...cat,
-              saldosPorCancelar: saldosPorCancelar
+              saldosPorCancelar: formatMoney(saldosPorCancelar) // ⚡ Formatear para mantener consistencia
             };
           } else if (usarPresupuesto) {
             // Para filas NO marcadas con Presup. Del Proy. > 0: Presup. Del Proy. - Registro Egresos
@@ -1336,7 +2245,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
             
             return {
               ...cat,
-              saldosPorCancelar: saldosPorCancelar
+              saldosPorCancelar: formatMoney(saldosPorCancelar) // ⚡ Formatear para mantener consistencia
             };
           } else {
             // Para las demás filas: mantener el valor actual sin calcular automáticamente
@@ -1750,70 +2659,124 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
   }, [egresosConFacturaKey, updateField, projectData.montoContrato, projectData.categorias]);
 
   // 📊 SINCRONIZAR TOTALES CON DATOS DEL SERVICIO
+  // ⚡ PROTECCIÓN: No sobrescribir valores que el usuario está editando activamente
   useEffect(() => {
     if (project && project.categorias) {
-      setProjectData(prev => ({
-        ...prev,
-        // Sincronizar datos principales
-        nombreProyecto: project.nombreProyecto || prev.nombreProyecto,
-        nombreCliente: project.nombreCliente || prev.nombreCliente,
-        estadoProyecto: project.estadoProyecto || prev.estadoProyecto,
-        tipoProyecto: project.tipoProyecto || prev.tipoProyecto,
+      // ⚡ Verificar si hay celdas siendo editadas actualmente
+      const hayCeldasEditando = Object.keys(editingCells).length > 0;
+      
+      setProjectData(prev => {
+        // ⚡ Si hay celdas siendo editadas, NO sobrescribir las categorías (preservar valores del usuario)
+        let categoriasFinales;
+        if (hayCeldasEditando) {
+          categoriasFinales = prev.categorias; // Mantener las categorías actuales si hay edición en curso
+        } else if (project.categorias && project.categorias.length > 0) {
+          // 🔒 PRESERVAR valores editados por el usuario (SISTEMA ROBUSTO)
+          categoriasFinales = project.categorias.map(cat => {
+            // ⚡ SOLO usar ID para identificar categorías (NO usar nombre como fallback para evitar propagación)
+            // Esto asegura que cada fila sea independiente, incluso si tienen el mismo nombre
+            const prevCat = prev.categorias?.find(pc => String(pc.id) === String(cat.id));
+            
+            // Parsear valores del servicio
+            const presupuestoServicio = parseMonetary(cat.presupuestoDelProyecto || 0);
+            const contratoServicio = parseMonetary(cat.contratoProvedYServ || 0);
+            const egresosServicio = parseMonetary(cat.registroEgresos || 0);
+            const saldosServicio = parseMonetary(cat.saldosPorCancelar || 0);
+            
+            // Parsear valores del estado previo
+            const presupuestoPrev = prevCat ? parseMonetary(prevCat.presupuestoDelProyecto || 0) : 0;
+            const contratoPrev = prevCat ? parseMonetary(prevCat.contratoProvedYServ || 0) : 0;
+            const egresosPrev = prevCat ? parseMonetary(prevCat.registroEgresos || 0) : 0;
+            const saldosPrev = prevCat ? parseMonetary(prevCat.saldosPorCancelar || 0) : 0;
+            
+            // 🔒 VERIFICAR SI EL USUARIO EDITÓ ESTOS VALORES (prioridad absoluta)
+            const presupuestoEditado = userEditedValuesRef.current.get(`${cat.id}-presupuestoDelProyecto`);
+            const contratoEditado = userEditedValuesRef.current.get(`${cat.id}-contratoProvedYServ`);
+            const egresosEditado = userEditedValuesRef.current.get(`${cat.id}-registroEgresos`);
+            const saldosEditado = userEditedValuesRef.current.get(`${cat.id}-saldosPorCancelar`);
+            
+            // ⚡ LÓGICA DE PRESERVACIÓN (en orden de prioridad):
+            // 1. Si el usuario editó el valor → SIEMPRE usar el valor editado
+            // 2. Si el valor previo > 0 → mantenerlo (usuario lo escribió antes)
+            // 3. Solo usar el valor del servicio si no hay valor previo ni editado
+            const presupuestoFinal = presupuestoEditado !== undefined ? presupuestoEditado : 
+                                     (presupuestoPrev > 0 ? presupuestoPrev : presupuestoServicio);
+            const contratoFinal = contratoEditado !== undefined ? contratoEditado : 
+                                 (contratoPrev > 0 ? contratoPrev : contratoServicio);
+            const egresosFinal = egresosEditado !== undefined ? egresosEditado : 
+                               (egresosPrev > 0 ? egresosPrev : egresosServicio);
+            const saldosFinal = saldosEditado !== undefined ? saldosEditado : 
+                              (saldosPrev > 0 ? saldosPrev : saldosServicio);
+            
+            return {
+              ...cat,
+              presupuestoDelProyecto: formatMoney(presupuestoFinal),
+              contratoProvedYServ: formatMoney(contratoFinal),
+              registroEgresos: formatMoney(egresosFinal),
+              saldosPorCancelar: formatMoney(saldosFinal)
+            };
+          });
+        } else {
+          categoriasFinales = prev.categorias;
+        }
         
-        // 💰 DATOS EDITABLES BÁSICOS
-        montoContrato: formatMoney(project.montoContrato || 0),
-        adelantos: formatMoney(project.adelantos || 0),
-        utilidadEstimadaSinFactura: formatMoney(project.utilidadEstimadaSinFactura || 0),
-        utilidadEstimadaConFactura: formatMoney(project.utilidadEstimadaConFactura || 0),
+        return {
+          ...prev,
+          // Sincronizar datos principales (solo si no están siendo editados)
+          nombreProyecto: project.nombreProyecto || prev.nombreProyecto,
+          nombreCliente: project.nombreCliente || prev.nombreCliente,
+          estadoProyecto: project.estadoProyecto || prev.estadoProyecto,
+          tipoProyecto: project.tipoProyecto || prev.tipoProyecto,
+          
+          // 💰 DATOS EDITABLES BÁSICOS (solo actualizar si no están siendo editados)
+          montoContrato: editingMontoContrato ? prev.montoContrato : formatMoney(project.montoContrato || 0),
+          adelantos: formatMoney(project.adelantos || 0),
+          utilidadEstimadaSinFactura: formatMoney(project.utilidadEstimadaSinFactura || 0),
+          utilidadEstimadaConFactura: formatMoney(project.utilidadEstimadaConFactura || 0),
+          
+          // 🧮 ANÁLISIS FINANCIERO - CAMPOS CALCULADOS (formato con separadores y 2 decimales)
+          utilidadRealSinFactura: formatMoney(project.utilidadRealSinFactura || 0),
+          balanceUtilidadSinFactura: formatMoney(project.balanceUtilidadSinFactura || 0),
+          utilidadRealConFactura: formatMoney(project.utilidadRealConFactura || 0),
+          balanceUtilidadConFactura: formatMoney(project.balanceUtilidadConFactura || 0),
+          
+          // 🧾 IGV - SUNAT 18% - CAMPOS CALCULADOS
+          igvSunat: formatMoney(project.igvSunat || 0),
+          creditoFiscalEstimado: formatMoney(project.creditoFiscalEstimado || 0),
+          impuestoEstimadoDelProyecto: formatMoney(project.impuestoEstimadoDelProyecto || 0),
+          creditoFiscalReal: formatMoney(project.creditoFiscalReal || 0),
+          impuestoRealDelProyecto: formatMoney(project.impuestoRealDelProyecto || 0),
+          
+          // 🧮 TOTALES Y BALANCES - CAMPOS CALCULADOS
+          totalContratoProveedores: formatMoney(project.totalContratoProveedores || 0),
+          totalSaldoPorPagarProveedores: formatMoney(project.totalSaldoPorPagarProveedores || 0),
+          balanceDeComprasDelProyecto: formatMoney(project.balanceDeComprasDelProyecto || 0),
+          saldoXCobrar: formatMoney(project.saldoXCobrar || 0),
+          presupuestoProyecto: formatMoney(project.presupuestoProyecto || 0),
+          totalEgresosProyecto: formatMoney(project.totalEgresosProyecto || 0),
+          balanceDelPresupuesto: formatMoney(project.balanceDelPresupuesto || 0),
+          
+          // Categorías sincronizadas (solo si no hay edición en curso)
+          categorias: categoriasFinales,
         
-        // 🧮 ANÁLISIS FINANCIERO - CAMPOS CALCULADOS (formato con separadores y 2 decimales)
-        utilidadRealSinFactura: formatMoney(project.utilidadRealSinFactura || 0),
-        balanceUtilidadSinFactura: formatMoney(project.balanceUtilidadSinFactura || 0),
-        utilidadRealConFactura: formatMoney(project.utilidadRealConFactura || 0),
-        balanceUtilidadConFactura: formatMoney(project.balanceUtilidadConFactura || 0),
-        
-        // 🧾 IGV - SUNAT 18% - CAMPOS CALCULADOS
-        igvSunat: formatMoney(project.igvSunat || 0),
-        creditoFiscalEstimado: formatMoney(project.creditoFiscalEstimado || 0),
-        impuestoEstimadoDelProyecto: formatMoney(project.impuestoEstimadoDelProyecto || 0),
-        creditoFiscalReal: formatMoney(project.creditoFiscalReal || 0),
-        impuestoRealDelProyecto: formatMoney(project.impuestoRealDelProyecto || 0),
-        
-        // 🧮 TOTALES Y BALANCES - CAMPOS CALCULADOS
-        totalContratoProveedores: formatMoney(project.totalContratoProveedores || 0),
-        totalSaldoPorPagarProveedores: formatMoney(project.totalSaldoPorPagarProveedores || 0),
-        balanceDeComprasDelProyecto: formatMoney(project.balanceDeComprasDelProyecto || 0),
-        saldoXCobrar: formatMoney(project.saldoXCobrar || 0),
-        presupuestoProyecto: formatMoney(project.presupuestoProyecto || 0),
-        totalEgresosProyecto: formatMoney(project.totalEgresosProyecto || 0),
-        balanceDelPresupuesto: formatMoney(project.balanceDelPresupuesto || 0),
-        
-        // Categorías sincronizadas
-        categorias: project.categorias.length > 0 ? project.categorias.map(cat => ({
-          ...cat,
-          presupuestoDelProyecto: cat.presupuestoDelProyecto || 0,
-          contratoProvedYServ: cat.contratoProvedYServ || 0,
-          registroEgresos: cat.registroEgresos || 0,
-          saldosPorCancelar: cat.saldosPorCancelar || 0
-        })) : prev.categorias,
-        
-        // 📅 SINCRONIZAR COBRANZAS GUARDADAS
-        // Si todas las filas tienen el mismo monto que el monto del contrato (estado antiguo),
-        // las reiniciamos a 0 para que aparezcan vacías.
-        cobranzas: (() => {
-          const fromService = project.cobranzas || prev.cobranzas;
-          if (Array.isArray(fromService) && fromService.length > 0) {
-            const contrato = parseFloat(project.montoContrato || 0);
-            const allEqualToContrato = fromService.every(c => (parseFloat(c?.monto) || 0) === contrato);
-            if (allEqualToContrato && contrato > 0) {
-              return fromService.map(c => ({ ...c, monto: 0 }));
+          // 📅 SINCRONIZAR COBRANZAS GUARDADAS
+          // Si todas las filas tienen el mismo monto que el monto del contrato (estado antiguo),
+          // las reiniciamos a 0 para que aparezcan vacías.
+          cobranzas: (() => {
+            const fromService = project.cobranzas || prev.cobranzas;
+            if (Array.isArray(fromService) && fromService.length > 0) {
+              const contrato = parseFloat(project.montoContrato || 0);
+              const allEqualToContrato = fromService.every(c => (parseFloat(c?.monto) || 0) === contrato);
+              if (allEqualToContrato && contrato > 0) {
+                return fromService.map(c => ({ ...c, monto: 0 }));
+              }
             }
-          }
-          return fromService;
-        })()
-      }));
+            return fromService;
+          })()
+        };
+      });
     }
-  }, [project]); // Se ejecuta cada vez que el proyecto del servicio cambie
+  }, [project, editingCells, editingMontoContrato]); // ⚡ Incluir editingCells y editingMontoContrato para no sobrescribir valores en edición
 
   const openViewer = (item) => {
     // item es el objeto que contiene { file, url, name, type }
@@ -2036,6 +2999,33 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     try {
       const saved = loadProjectFromLocalStores(projectNumber);
       if (saved) {
+        // ⚡ Asegurar que siempre tengamos las 24 categorías por defecto
+        let categoriasFinales = saved.categorias;
+        
+        if (!Array.isArray(categoriasFinales) || categoriasFinales.length !== 24) {
+          console.log(`🔧 Inicializando categorías desde localStorage para proyecto ${projectNumber}`);
+          const defaultCategories = projectDataService.getInitialProjects()[1].categorias;
+          categoriasFinales = [...defaultCategories];
+          
+          // Si hay algunas categorías guardadas, intentar preservarlas
+          if (Array.isArray(saved.categorias) && saved.categorias.length > 0) {
+            const existingCategoriesMap = new Map();
+            saved.categorias.forEach(cat => {
+              if (cat.nombre) {
+                existingCategoriesMap.set(cat.nombre.toLowerCase().trim(), cat);
+              }
+            });
+            
+            categoriasFinales = defaultCategories.map(defaultCat => {
+              const existing = existingCategoriesMap.get(defaultCat.nombre.toLowerCase().trim());
+              return existing ? { ...defaultCat, ...existing } : defaultCat;
+            });
+          }
+          
+          // Actualizar saved con las categorías inicializadas
+          saved.categorias = categoriasFinales;
+        }
+        
         setProjectData(prev => ({ ...prev, ...saved }));
         // también sincronizar con el servicio si existe
         if (updateField) {
@@ -2050,17 +3040,21 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
 
   }, [projectNumber]);
 
-  // Guardado automático de projectData en localStorage (debounce)
+  // Guardado automático de projectData en localStorage (debounce mejorado)
   useEffect(() => {
     if (!projectNumber) return;
-    // debounce para evitar escrituras continuas
+    
+    // ⚡ PROTECCIÓN: Solo guardar si projectData realmente cambió (evitar bucles)
     const t = setTimeout(() => {
       try {
-    saveProjectToLocalStores(projectNumber, projectData);
+        // Verificar que projectData tenga contenido válido antes de guardar
+        if (projectData && Object.keys(projectData).length > 0) {
+          saveProjectToLocalStores(projectNumber, projectData);
+        }
       } catch (e) {
         console.warn('No se pudo guardar projectData automáticamente en localStorage', e);
       }
-    }, 800);
+    }, 1000); // ⚡ Aumentar debounce a 1 segundo para evitar escrituras excesivas
 
     return () => clearTimeout(t);
   }, [projectNumber, projectData]);
@@ -2226,35 +3220,132 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
   // Cargar datos del proyecto si existe
   useEffect(() => {
     if (proyecto) {
+      // ⚡ Asegurar que siempre tengamos las 24 categorías por defecto
+      let categoriasFinales = proyecto.categorias;
+      
+      if (!Array.isArray(categoriasFinales) || categoriasFinales.length !== 24) {
+        console.log(`🔧 Inicializando categorías desde prop proyecto para proyecto ${projectNumber}`);
+        const defaultCategories = projectDataService.getInitialProjects()[1].categorias;
+        categoriasFinales = [...defaultCategories];
+        
+        // Si hay algunas categorías, intentar preservarlas
+        if (Array.isArray(proyecto.categorias) && proyecto.categorias.length > 0) {
+          const existingCategoriesMap = new Map();
+          proyecto.categorias.forEach(cat => {
+            if (cat.nombre) {
+              existingCategoriesMap.set(cat.nombre.toLowerCase().trim(), cat);
+            }
+          });
+          
+          categoriasFinales = defaultCategories.map(defaultCat => {
+            const existing = existingCategoriesMap.get(defaultCat.nombre.toLowerCase().trim());
+            return existing ? { ...defaultCat, ...existing } : defaultCat;
+          });
+        }
+      }
+      
       setProjectData(prev => ({
         ...prev,
         ...proyecto,
-        categorias: proyecto.categorias || prev.categorias
+        categorias: categoriasFinales || prev.categorias || []
       }));
     }
-  }, [proyecto]);
+  }, [proyecto, projectNumber]);
   
   return (
     <div className="flex flex-col h-screen bg-gray-50">
       {/* Estilos para impresión */}
       <style>{`
+        /* Estilos para vista previa de PDF de Cobranzas */
+        #cobranzas-preview-content {
+          font-family: Arial, sans-serif;
+        }
+        #cobranzas-preview-content table {
+          border-collapse: collapse;
+          width: 100%;
+        }
+        #cobranzas-preview-content table td,
+        #cobranzas-preview-content table th {
+          border: 1px solid #9ca3af;
+          padding: 4px 8px;
+          font-size: 12px;
+        }
+        #cobranzas-preview-content .bg-green-600 {
+          background-color: #16a34a !important;
+          color: white !important;
+        }
+        #cobranzas-preview-content .bg-black {
+          background-color: #000000 !important;
+          color: white !important;
+        }
+        #cobranzas-preview-content input {
+          pointer-events: none;
+          background: transparent !important;
+        }
+        
         @media print {
           body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
           .no-print { display: none !important; }
           #print-area {
-            display: grid !important;
-            grid-template-columns: 0.9fr 1.1fr !important;
-            gap: 10px !important;
+            display: flex !important;
+            flex-direction: row !important;
+            gap: 20px !important;
             width: 100% !important;
           }
-          #print-area .left-banner { position: static !important; width: auto !important; top: 0 !important; }
-          #print-area .left-panel, #print-area .right-panel { width: auto !important; }
+          #print-area .left-banner { display: none !important; }
+          #print-area .left-panel, #print-area .right-panel { 
+            width: auto !important;
+            flex-shrink: 0 !important;
+            page-break-inside: avoid !important;
+          }
           #print-area * { overflow: visible !important; }
-          /* Ajustes tipográficos y celdas para que no se recorte */
-          #print-area table { width: 100% !important; }
+          
+          /* Asegurar que las tablas se muestren correctamente */
+          #print-area table { 
+            width: 100% !important;
+            border-collapse: collapse !important;
+            display: table !important;
+          }
           #print-area table td, 
-          #print-area table th { padding: 2px 4px !important; font-size: 11px !important; }
-          #print-area .right-panel table td:last-child { white-space: nowrap !important; }
+          #print-area table th { 
+            padding: 2px 4px !important; 
+            font-size: 11px !important;
+            display: table-cell !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            color: #000 !important;
+            background-color: transparent !important;
+          }
+          
+          /* Asegurar que los valores del panel derecho se muestren */
+          #print-area .right-panel table td:last-child { 
+            white-space: nowrap !important;
+            display: table-cell !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            color: #000 !important;
+            content: attr(data-value) !important;
+          }
+          
+          /* Asegurar que los inputs y selects muestren sus valores */
+          #print-area input[type="text"],
+          #print-area input[type="number"],
+          #print-area select {
+            border: none !important;
+            background: transparent !important;
+            -webkit-appearance: none !important;
+            appearance: none !important;
+            display: inline-block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            color: #000 !important;
+          }
+          
+          /* Asegurar que los valores calculados se muestren */
+          #print-area .right-panel td {
+            content: "" !important;
+          }
+          
           /* Escala global para que quepa en una sola hoja */
           html, body { zoom: 0.88; }
           @page { size: A4 landscape; margin: 10mm; }
@@ -2269,11 +3360,14 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
               ← Volver
             </button>
             <button
-          onClick={handlePrintProyecto}
+              onClick={handlePrintWindow}
           className="inline-flex items-center gap-1.5 px-2 py-1 rounded bg-green-600 text-white text-xs font-semibold shadow hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-400 no-print"
-          title="Generar PDF del proyecto completo"
+              title="Imprimir proyecto"
             >
-          Generar PDF
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+              </svg>
+              Imprimir
             </button>
         </div>
 
@@ -2584,19 +3678,19 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                   <tbody>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Utilidad Estimada Sin Factura</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900 print-value">
                         {formatMoney(parseMonetary(projectData.montoContrato || 0) - totalesCalculados.presupuesto) || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Utilidad Real Sin Factura</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900 print-value">
                         {formatMoney(parseMonetary(projectData.montoContrato || 0) - totalesCalculados.egresos) || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Balance de Utilidad +/-</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900 print-value">
                         {(() => {
                           // Calcular directamente desde los totales para asegurar precisión
                           const montoContrato = parseMonetary(projectData.montoContrato || 0);
@@ -2613,7 +3707,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Utilidad Estimada Con Factura</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900 print-value">
                         {(() => {
                           // Utilidad Estimada Con Factura = Monto del Contrato - (Presupuesto Del Proyecto + Impuesto Estimado del Proyecto)
                           const montoContrato = parseMonetary(projectData.montoContrato || 0);
@@ -2649,7 +3743,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Utilidad Real Con Factura</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900 print-value">
                         {(() => {
                           // Utilidad Real Con Factura = Monto del Contrato - (Total Registro de Egresos + Crédito Fiscal Real)
                           const montoContrato = parseMonetary(projectData.montoContrato || 0);
@@ -2672,7 +3766,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Balance de Utilidad</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900 print-value">
                         {(() => {
                           // Balance de Utilidad = Utilidad Estimada Con Factura - Utilidad Real Con Factura
                           const montoContrato = parseMonetary(projectData.montoContrato || 0);
@@ -2736,7 +3830,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Impuesto Estimado del Proyecto</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900 print-value">
                         {(() => {
                           const igvSunat = (parseMonetary(projectData.montoContrato || 0) / 1.18) * 0.18;
                           const creditoFiscalEstimado = parseMonetary(projectData.creditoFiscalEstimado || 0);
@@ -2747,7 +3841,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Crédito Fiscal Real</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px] text-left whitespace-nowrap pl-1 font-bold text-gray-900 print-value">
                         {(() => {
                           // Suma de Registro Egresos con F (roja)
                           const totalEgresosConFactura = (projectData.categorias || []).reduce((sum, cat) => {
@@ -2765,7 +3859,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Impuesto Real del Proyecto</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1 font-bold text-gray-900 print-value">
                         {(() => {
                           // Impuesto Real del Proyecto = IGV - SUNAT 18% - Crédito Fiscal Real
                           const montoContrato = parseMonetary(projectData.montoContrato || 0);
@@ -2792,13 +3886,13 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Total Contrato Proveedores</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1 font-bold text-gray-900 print-value">
                         {formatMoney(totalesCalculados.contrato) || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Total Saldo Por Pagar Proveedores</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1 font-bold text-gray-900 print-value">
                         {projectData.totalSaldoPorPagarProveedores || 'S/0.00'}
                       </td>
                     </tr>
@@ -2914,7 +4008,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Saldo Por Cobrar</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1 font-bold text-gray-900 print-value">
                         {projectData.saldoXCobrar || 'S/0.00'}
                       </td>
                     </tr>
@@ -2924,13 +4018,13 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Presupuesto Del Proyecto</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1 font-bold text-gray-900 print-value">
                         {formatMoney(totalesCalculados.presupuesto) || 'S/0.00'}
                       </td>
                     </tr>
                     <tr>
                       <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">Total de Egresos del Proyecto</td>
-                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1 font-bold text-gray-900">
+                      <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[90px] max-w-[90px] text-left whitespace-nowrap pl-1 font-bold text-gray-900 print-value">
                         {formatMoney(totalesCalculados.egresos) || 'S/0.00'}
                       </td>
                     </tr>
@@ -3162,8 +4256,11 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
             <div className="bg-green-600 text-white px-3 py-2 text-sm font-bold flex items-center justify-between rounded-t-lg">
               <span>💰 Cobranzas del Proyecto</span>
               <div className="flex items-center gap-2">
-                <button onClick={handlePrintCobranzas} className="bg-white text-green-700 px-2 py-1 rounded text-xs hover:bg-gray-100">
-                  Generar PDF
+                <button 
+                  onClick={handlePrintCobranzasWindow} 
+                  className="bg-white text-green-700 px-2 py-1 rounded text-xs hover:bg-gray-100"
+                >
+                  Imprimir
                 </button>
                 <button onClick={() => setCobranzasPopupOpen(false)} className="text-white/90 hover:text-white">
                   <XMarkIcon className="h-5 w-5" />
@@ -3275,6 +4372,73 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
             {/* Footer */}
             <div className="px-3 py-2 bg-gray-50 border-t border-gray-200 flex justify-end gap-2 rounded-b-lg">
               <button onClick={() => setCobranzasPopupOpen(false)} className="px-3 py-1.5 rounded border border-gray-300 text-gray-700 text-sm">Cerrar</button>
+      </div>
+          </div>
+        </>
+      )}
+
+      {/* 📄 MODAL DE VISTA PREVIA PARA PDF DE COBRANZAS */}
+      {cobranzasPreviewOpen && (
+        <>
+          <div className="fixed inset-0 z-50 bg-black/60" onClick={() => setCobranzasPreviewOpen(false)} />
+          <div className="fixed z-50 bg-white rounded-lg shadow-2xl w-[90vw] max-w-[800px] max-h-[90vh] overflow-hidden border-2 border-blue-500" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
+            {/* Header azul para vista previa */}
+            <div className="bg-blue-600 text-white px-4 py-3 text-base font-bold flex items-center justify-between">
+              <span>👁️ Vista Previa - Cobranzas del Proyecto</span>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={handleGeneratePDFFromPreview} 
+                  disabled={generatingPDF}
+                  className={`px-3 py-1.5 rounded text-sm font-semibold ${
+                    generatingPDF 
+                      ? 'bg-gray-400 text-white cursor-not-allowed' 
+                      : 'bg-green-500 text-white hover:bg-green-600'
+                  }`}
+                >
+                  {generatingPDF ? '⏳ Generando...' : '✅ Generar PDF'}
+                </button>
+                <button 
+                  onClick={() => {
+                    setCobranzasPreviewOpen(false);
+                    setGeneratingPDF(false);
+                  }} 
+                  disabled={generatingPDF}
+                  className={`px-3 py-1.5 rounded text-sm font-semibold ${
+                    generatingPDF 
+                      ? 'bg-gray-400 text-white cursor-not-allowed' 
+                      : 'bg-red-500 text-white hover:bg-red-600'
+                  }`}
+                >
+                  ✖️ Cerrar
+                </button>
+              </div>
+            </div>
+
+            {/* Contenedor de vista previa con scroll */}
+            <div className="p-6 bg-gray-50 overflow-y-auto" style={{ maxHeight: 'calc(90vh - 80px)' }}>
+              {/* Mensaje informativo arriba */}
+              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
+                <p className="font-semibold mb-1">📋 Vista Previa de Impresión</p>
+                <p>Esta es la vista exacta de cómo se verá el PDF. Si todo se ve correctamente, haz clic en "Generar PDF" para descargarlo.</p>
+              </div>
+              
+              <div className="bg-white p-4 rounded shadow-sm border border-gray-300">
+                <div 
+                  ref={cobranzasPreviewRef} 
+                  id="cobranzas-preview-content"
+                  className="w-full"
+                  style={{ 
+                    backgroundColor: '#ffffff',
+                    minHeight: '400px',
+                    fontFamily: 'Arial, sans-serif'
+                  }}
+                >
+                  {/* El contenido se insertará aquí dinámicamente */}
+                  <div className="text-center text-gray-400 py-20">
+                    <p>Cargando vista previa...</p>
+                  </div>
+                </div>
+              </div>
       </div>
           </div>
         </>

@@ -6,7 +6,8 @@ import projectDataService from '../services/projectDataService';
 
 // 📊 HOOK PRINCIPAL: useProjectData
 export const useProjectData = () => {
-  const [projects, setProjects] = useState(projectDataService.getAllProjects());
+  // ⚡ Usar getAllProjectsSync() para evitar llamadas async en la inicialización
+  const [projects, setProjects] = useState(() => projectDataService.getAllProjectsSync());
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -32,17 +33,26 @@ export const useProjectData = () => {
     setLoading(false);
   }, []);
 
-  const createProject = useCallback((projectData) => {
-    setLoading(true);
-    const newProject = projectDataService.createProject(projectData);
-    setLoading(false);
-    return newProject;
+  const createProject = useCallback(async (projectData) => {
+    // ⚡ No usar setLoading aquí porque createProject ya es instantáneo (crea primero localmente)
+    try {
+      const newProject = await projectDataService.createProject(projectData);
+      // El proyecto ya está creado y notificado, retornar inmediatamente
+      return newProject;
+    } catch (error) {
+      console.error('Error creando proyecto:', error);
+      throw error;
+    }
   }, []);
 
-  const deleteProject = useCallback((projectId) => {
-    setLoading(true);
-    projectDataService.deleteProject(projectId);
-    setLoading(false);
+  const deleteProject = useCallback(async (projectId) => {
+    // ⚡ No usar setLoading aquí porque deleteProject ya es instantáneo (elimina primero localmente)
+    try {
+      await projectDataService.deleteProject(projectId);
+      // El proyecto ya está eliminado y notificado
+    } catch (error) {
+      console.error('Error eliminando proyecto:', error);
+    }
   }, []);
 
   const updateCategory = useCallback((projectId, categoryId, updates) => {

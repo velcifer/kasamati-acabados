@@ -60,12 +60,15 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-// Rutas para futuras funcionalidades
+// Rutas para funcionalidades principales
 app.use('/api/ventas', require('./routes/ventas'));
 app.use('/api/proyectos', require('./routes/proyectos'));
 app.use('/api/alertas', require('./routes/alertas'));
 app.use('/api/citas', require('./routes/citas'));
 app.use('/api/chatbot', require('./routes/chatbot'));
+
+// 🔄 Rutas para sincronización offline/online
+app.use('/api/sync', require('./routes/sync'));
 
 // Manejo de errores
 app.use((err, req, res, next) => {

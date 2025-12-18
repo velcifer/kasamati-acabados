@@ -1,6 +1,7 @@
 // 🔗 SERVICIO HÍBRIDO - API + LOCALSTORAGE FALLBACK
 import { proyectosAPI, checkServerHealth } from './api';
 import { localStorageAPI } from './localStorage';
+import syncService from './syncService';
 
 // 🧪 Estado de conectividad
 let isServerOnline = true;
@@ -38,11 +39,11 @@ const checkServerStatus = async () => {
 
 // 🔄 Servicio híbrido principal
 export const dataService = {
-  
+
   // 📊 Obtener todos los proyectos
   getAllProjects: async () => {
     const serverOnline = await checkServerStatus();
-    
+
     if (serverOnline) {
       try {
         const result = await proyectosAPI.getAll();
@@ -71,20 +72,22 @@ export const dataService = {
               creditoFiscal: project.credito_fiscal,
               impuestoRealProyecto: project.impuesto_real_proyecto
             };
-            
+
             // Actualizar localStorage sin sobreescribir
             const projects = JSON.parse(localStorage.getItem('ksamti_proyectos') || '{}');
             projects[project.numero_proyecto] = projectForStorage;
             localStorage.setItem('ksamti_proyectos', JSON.stringify(projects));
           });
-          
+
           return { ...result, source: 'API + localStorage backup' };
         }
       } catch (error) {
         console.warn('⚠️ Error en API, fallback a localStorage');
+        // Intentar sincronización cuando vuelva la conexión
+        syncService.forceSync().catch(err => console.warn('⚠️ Error en sync automática:', err));
       }
     }
-    
+
     // Fallback a localStorage
     return localStorageAPI.getAll();
   },
@@ -111,7 +114,7 @@ export const dataService = {
   // ➕ Crear proyecto
   createProject: async (projectData) => {
     const serverOnline = await checkServerStatus();
-    
+
     if (serverOnline) {
       try {
         const result = await proyectosAPI.create(projectData);
@@ -121,18 +124,36 @@ export const dataService = {
           return { ...result, source: 'API + localStorage backup' };
         }
       } catch (error) {
-        console.warn('⚠️ Error en API, fallback a localStorage');
+        console.warn('⚠️ Error en API, creando offline');
+        // Agregar a cola de sincronización
+        syncService.addOfflineOperation({
+          type: 'create',
+          entityType: 'proyecto',
+          entityId: null, // Se asignará cuando se sincronice
+          data: projectData,
+          priority: 2 // Alta prioridad para creaciones
+        });
       }
     }
-    
-    // Fallback a localStorage
-    return localStorageAPI.create(projectData);
+
+    // Fallback a localStorage + cola offline
+    const localResult = await localStorageAPI.create(projectData);
+    if (!serverOnline) {
+      syncService.addOfflineOperation({
+        type: 'create',
+        entityType: 'proyecto',
+        entityId: localResult.data?.id,
+        data: projectData,
+        priority: 2
+      });
+    }
+    return localResult;
   },
   
   // 🔄 Actualizar proyecto
   updateProject: async (id, projectData) => {
     const serverOnline = await checkServerStatus();
-    
+
     if (serverOnline) {
       try {
         const result = await proyectosAPI.update(id, projectData);
@@ -142,18 +163,36 @@ export const dataService = {
           return { ...result, source: 'API + localStorage sync' };
         }
       } catch (error) {
-        console.warn('⚠️ Error en API, fallback a localStorage');
+        console.warn('⚠️ Error en API, actualizando offline');
+        // Agregar a cola de sincronización
+        syncService.addOfflineOperation({
+          type: 'update',
+          entityType: 'proyecto',
+          entityId: id,
+          data: projectData,
+          priority: 1 // Prioridad normal para actualizaciones
+        });
       }
     }
-    
-    // Fallback a localStorage
-    return localStorageAPI.update(id, projectData);
+
+    // Fallback a localStorage + cola offline
+    const localResult = await localStorageAPI.update(id, projectData);
+    if (!serverOnline) {
+      syncService.addOfflineOperation({
+        type: 'update',
+        entityType: 'proyecto',
+        entityId: id,
+        data: projectData,
+        priority: 1
+      });
+    }
+    return localResult;
   },
-  
+
   // 🗑️ Eliminar proyectos
   deleteProjects: async (ids) => {
     const serverOnline = await checkServerStatus();
-    
+
     if (serverOnline) {
       try {
         const result = await proyectosAPI.delete(ids);
@@ -163,12 +202,34 @@ export const dataService = {
           return { ...result, source: 'API + localStorage sync' };
         }
       } catch (error) {
-        console.warn('⚠️ Error en API, fallback a localStorage');
+        console.warn('⚠️ Error en API, eliminando offline');
+        // Agregar a cola de sincronización
+        ids.forEach(id => {
+          syncService.addOfflineOperation({
+            type: 'delete',
+            entityType: 'proyecto',
+            entityId: id,
+            data: null,
+            priority: 3 // Alta prioridad para eliminaciones
+          });
+        });
       }
     }
-    
-    // Fallback a localStorage
-    return localStorageAPI.delete(ids);
+
+    // Fallback a localStorage + cola offline
+    const localResult = await localStorageAPI.delete(ids);
+    if (!serverOnline) {
+      ids.forEach(id => {
+        syncService.addOfflineOperation({
+          type: 'delete',
+          entityType: 'proyecto',
+          entityId: id,
+          data: null,
+          priority: 3
+        });
+      });
+    }
+    return localResult;
   },
   
   // 📊 Obtener estadísticas
@@ -262,11 +323,27 @@ export const dataService = {
   },
   
   // 🔍 Obtener estado de conectividad
-  getConnectionStatus: () => ({
-    isOnline: isServerOnline,
-    lastCheck: lastHealthCheck,
-    source: isServerOnline ? 'API + MySQL' : 'localStorage'
-  })
+  getConnectionStatus: () => {
+    const syncState = syncService.getState();
+    return {
+      isOnline: syncState.isOnline,
+      isServerOnline: isServerOnline,
+      lastCheck: lastHealthCheck,
+      lastSync: syncState.lastSync,
+      pendingOperations: syncState.pendingOperations,
+      isSyncing: syncState.isSyncing,
+      conflicts: syncState.conflicts.length,
+      deviceId: syncState.deviceId,
+      source: syncState.isOnline ? 'API + MySQL + Sync' : 'localStorage + Offline Queue'
+    };
+  },
+
+  // 🔄 Funciones de sincronización
+  sync: () => syncService.sync(),
+  forceSync: () => syncService.forceSync(),
+  resolveConflict: (conflictId, resolution, mergedData) =>
+    syncService.resolveConflict(conflictId, resolution, mergedData),
+  addSyncListener: (callback) => syncService.addListener(callback)
 };
 
 // 🎯 Hook personalizado para React (opcional)

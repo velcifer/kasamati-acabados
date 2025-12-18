@@ -38,6 +38,8 @@ const ExcelGridSimple = () => {
   const [loading, setLoading] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState(null);
   const [syncMessage, setSyncMessage] = useState('');
+  const [isSyncing, setIsSyncing] = useState(false); // Bandera para evitar sincronizaciones simultáneas
+  const loadingRef = React.useRef(false); // Ref para evitar múltiples cargas simultáneas
 
   // 📱 DETECTAR TAMAÑO DE PANTALLA RESPONSIVE MEJORADO CON ZOOM
   const [screenSize, setScreenSize] = useState('desktop');
@@ -125,14 +127,73 @@ const ExcelGridSimple = () => {
   
 
   const loadProjectsData = async () => {
+    // ⚡ BANDERA para evitar múltiples ejecuciones simultáneas
+    if (loadingRef.current) {
+      console.log('⏸️ Ya hay una carga en curso, omitiendo...');
+      return;
+    }
+    
     try {
+      loadingRef.current = true;
       setLoading(true);
-      setSyncMessage('Cargando proyectos...');
+      
+      // ⚡ CARGAR PRIMERO DESDE LOCALSTORAGE (instantáneo, no bloquea UI)
+      let projectsFromService = projectDataService.getAllProjectsSync();
+      
+      // ⚡ PROCESAR Y MOSTRAR DATOS LOCALES INMEDIATAMENTE
+      if (projectsFromService && Object.keys(projectsFromService).length > 0) {
+        setSyncMessage('📦 Datos cargados desde caché');
+        // Continuar procesando datos locales sin esperar MySQL
+      } else {
+        setSyncMessage('Cargando proyectos...');
+      }
+      
+      // 🔄 SINCRONIZAR CON MYSQL EN SEGUNDO PLANO (SIN AWAIT - NO BLOQUEA)
+      // Solo sincronizar si no hay otra sincronización en curso y la API está disponible
+      if (!isSyncing && projectDataService.apiAvailable) {
+        setIsSyncing(true);
+        // ⚡ Timeout más corto para evitar que se quede cargando mucho tiempo
+        const syncTimeout = setTimeout(() => {
+          console.warn('⚠️ Timeout en sincronización, usando datos locales');
+          setSyncMessage('⚠️ Usando datos locales (sincronización lenta)');
+          setIsSyncing(false);
+        }, 3000); // 3 segundos máximo
+        
+        // ⚡ Usar catch para manejar errores sin mostrar en consola si es timeout esperado
+        projectDataService.getAllProjects().then(mysqlProjects => {
+          clearTimeout(syncTimeout);
+          // Si hay más proyectos en MySQL, actualizar sin recargar (evitar loop infinito)
+          if (mysqlProjects && Object.keys(mysqlProjects).length > 0) {
+            setSyncMessage('✅ Datos sincronizados con MySQL');
+            // NO recargar loadProjectsData() aquí para evitar loop infinito
+            // Los datos ya están actualizados en projectDataService
+          } else {
+            setSyncMessage('✅ Sincronización completa');
+          }
+          setIsSyncing(false);
+        }).catch(error => {
+          clearTimeout(syncTimeout);
+          // Silenciar todos los errores de timeout y red - son esperados cuando el servidor no está disponible
+          const isExpectedError = 
+            error.message === 'Timeout MySQL' || 
+            error.message?.includes('Timeout') ||
+            error.message?.includes('Failed to fetch') ||
+            error.name === 'AbortError';
+          
+          if (!isExpectedError) {
+            console.warn('⚠️ Error sincronizando con MySQL:', error);
+          }
+          setSyncMessage('⚠️ Usando datos locales (MySQL no disponible)');
+          setIsSyncing(false);
+        });
+      } else if (!projectDataService.apiAvailable) {
+        // Si la API no está disponible, no intentar sincronizar
+        setSyncMessage('📦 Usando datos locales');
+      }
       
       // 🔄 LEER DESDE projectDataService (misma fuente que ProyectoDetalle) para sincronización automática
       // También intentar desde dataService como fallback
       let result;
-      let projectsFromService = projectDataService.getAllProjects();
       
       if (projectsFromService && Object.keys(projectsFromService).length > 0) {
         // Convertir proyectos de projectDataService al formato esperado
@@ -164,10 +225,34 @@ const ExcelGridSimple = () => {
         
         result = { success: true, data: projectsArray, source: 'projectDataService' };
         console.log('📊 Datos cargados desde projectDataService:', projectsArray.length, 'proyectos');
+        
+        // ⚡ DESBLOQUEAR UI INMEDIATAMENTE DESPUÉS DE CARGAR DATOS LOCALES
+        setLoading(false);
       } else {
-        // Fallback a dataService si projectDataService está vacío
-        result = await dataService.getAllProjects();
-        console.log('📊 Datos cargados desde dataService (fallback)');
+        // Fallback a dataService si projectDataService está vacío (con timeout para no bloquear)
+        try {
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout')), 2000)
+          );
+          result = await Promise.race([
+            dataService.getAllProjects(),
+            timeoutPromise
+          ]);
+          console.log('📊 Datos cargados desde dataService (fallback)');
+          setLoading(false);
+        } catch (error) {
+          // Silenciar errores de timeout - son esperados cuando el servidor no está disponible
+          const isExpectedError = 
+            error.message === 'Timeout' || 
+            error.message?.includes('Timeout') ||
+            error.message?.includes('Failed to fetch');
+          
+          if (!isExpectedError) {
+            console.warn('⚠️ Error cargando desde dataService:', error);
+          }
+          result = { success: true, data: [] };
+          setLoading(false);
+        }
       }
       
       const connectionStatus = dataService.getConnectionStatus();
@@ -531,34 +616,90 @@ const ExcelGridSimple = () => {
       }
       
       setConnectionStatus(connectionStatus);
+      
+      // ⚡ DESACTIVAR LOADING INMEDIATAMENTE después de procesar datos locales
+      // No esperar a que termine la sincronización con MySQL
+      setLoading(false);
+      loadingRef.current = false;
+      
     } catch (error) {
       console.error('Error en loadProjectsData:', error);
       setSyncMessage('❌ Error cargando datos');
-    } finally {
+      // ⚡ Asegurar que loading se desactive incluso si hay error
       setLoading(false);
+      loadingRef.current = false;
     }
   };
 
   // 🔄 Cargar datos iniciales y escuchar cambios de projectDataService
   useEffect(() => {
-    // Cargar datos iniciales
-    loadProjectsData();
+    // ⚡ BANDERA para evitar múltiples cargas simultáneas
+    let isMounted = true;
+    let isLoading = false;
+    
+    const loadData = async () => {
+      if (isLoading) return; // Evitar múltiples cargas simultáneas
+      isLoading = true;
+      try {
+        await loadProjectsData();
+      } finally {
+        if (isMounted) {
+          isLoading = false;
+        }
+      }
+    };
+    
+    // Cargar datos iniciales solo una vez
+    loadData();
     
     // 🔄 ESCUCHAR CAMBIOS DE projectDataService para auto-actualizar cuando se editen datos en ProyectoDetalle
+    // ⚡ NO recargar automáticamente - rawData del hook ya se actualiza automáticamente
+    // Solo recargar si realmente es necesario (creación desde otro componente, etc.)
     const unsubscribe = projectDataService.addListener((updatedProjects) => {
-      console.log('🔄 Cambios detectados en projectDataService, recargando datos...', {
+      console.log('🔄 Cambios detectados en projectDataService:', {
         proyectosActualizados: Object.keys(updatedProjects).length,
         proyectos: Object.keys(updatedProjects)
       });
-      // Recargar datos cuando haya cambios
-      loadProjectsData();
+      // ⚡ NO recargar automáticamente - el hook useExcelGrid ya actualiza rawData
+      // Esto evita recargas innecesarias después de eliminar proyectos
+      // Los datos ya están sincronizados a través del hook
     });
     
     // Cleanup: desuscribirse cuando el componente se desmonte
     return () => {
+      isMounted = false;
       if (unsubscribe) unsubscribe();
     };
-  }, [loadProjectsData]);
+  }, []); // ⚡ Array vacío - solo ejecutar una vez al montar
+  
+  // 🔄 Recarga automática desde MySQL cada 2 minutos (solo en segundo plano, no bloquea)
+  useEffect(() => {
+    // Esperar 10 segundos antes de iniciar el intervalo para no interferir con la carga inicial
+    const initialDelay = setTimeout(() => {
+      const reloadInterval = setInterval(() => {
+        // Solo recargar si no está cargando, no está sincronizando, y la página está visible
+        if (!loading && !isSyncing && !document.hidden) {
+          console.log('🔄 Recarga automática desde MySQL...');
+          setIsSyncing(true);
+          // Recargar en segundo plano sin bloquear UI
+          projectDataService.getAllProjects().then(() => {
+            setIsSyncing(false);
+            setSyncMessage('✅ Sincronización automática completada');
+            setTimeout(() => setSyncMessage(''), 2000);
+          }).catch(err => {
+            console.warn('⚠️ Error en recarga automática:', err);
+            setIsSyncing(false);
+          });
+        }
+      }, 120000); // 2 minutos (más espaciado para evitar interferencias)
+      
+      return () => clearInterval(reloadInterval);
+    }, 10000);
+    
+    return () => {
+      clearTimeout(initialDelay);
+    };
+  }, [loading, isSyncing]);
 
   const handleGoBack = () => {
     navigate('/inicio');
@@ -740,7 +881,8 @@ const ExcelGridSimple = () => {
       };
       
       // El hook creará el proyecto automáticamente y actualizará el estado
-      const newProject = createNewProject(projectData);
+      // ⚡ createNewProject ahora es async pero es instantáneo (crea primero localmente)
+      const newProject = await createNewProject(projectData);
       const newRowIndex = currentProjects.length + 1;
       
       console.log('✅ Proyecto creado automáticamente:', newProject);
@@ -861,16 +1003,41 @@ const ExcelGridSimple = () => {
         ));
         
         // 🔄 PASO 3: Actualizar en backend en paralelo (no bloqueante)
+        // ⚡ Usar projectDataService directamente para mejor control de sincronización
         try {
-          const result = await dataService.updateProject(currentTab.rowIndex, projectSummary);
-          console.log('🔄 Resultado del backend:', result);
+          // Los datos ya están guardados localmente por el hook useProjectDetail
+          // Solo sincronizar con MySQL en segundo plano
+          const projectId = currentTab.rowIndex;
+          const projectFromService = projectDataService.getProject(projectId);
           
-          if (result.success) {
-            setSyncMessage(`✅ Proyecto "${projectSummary.nombreProyecto}" guardado y sincronizado`);
-            console.log(`✅ Proyecto ${currentTab.rowIndex} sincronizado con BD`);
+          if (projectFromService) {
+            // Sincronizar con MySQL en segundo plano (no bloquea)
+            projectDataService.syncToMySQL(projectId, projectFromService).then(() => {
+              setSyncMessage(`✅ Proyecto "${projectSummary.nombreProyecto}" guardado y sincronizado`);
+              console.log(`✅ Proyecto ${projectId} sincronizado con BD`);
+              
+              // 🔄 Recargar datos desde MySQL después de sincronizar (sin bloquear UI)
+              setTimeout(() => {
+                projectDataService.getAllProjects().then(() => {
+                  console.log('✅ Datos recargados desde MySQL después de actualizar');
+                  // Forzar actualización de la UI
+                  setForceUpdate(prev => prev + 1);
+                }).catch(err => {
+                  console.warn('⚠️ Error recargando datos:', err.message);
+                });
+              }, 500);
+            }).catch(err => {
+              console.warn('⚠️ Error sincronizando con MySQL (datos guardados localmente):', err.message);
+              setSyncMessage(`⚠️ Cambios guardados localmente, error de sincronización`);
+            });
           } else {
-            console.warn('⚠️ Backend falló pero UI actualizada:', result.error);
-            setSyncMessage(`⚠️ Cambios guardados localmente, error de sincronización: ${result.error}`);
+            // Fallback: usar dataService si projectDataService no tiene el proyecto
+            const result = await dataService.updateProject(currentTab.rowIndex, projectSummary);
+            if (result.success) {
+              setSyncMessage(`✅ Proyecto "${projectSummary.nombreProyecto}" guardado y sincronizado`);
+            } else {
+              setSyncMessage(`⚠️ Cambios guardados localmente, error de sincronización`);
+            }
           }
         } catch (backendError) {
           console.warn('⚠️ Error de backend, pero UI actualizada:', backendError);
@@ -980,10 +1147,27 @@ const ExcelGridSimple = () => {
       console.log('📝 Proyectos a eliminar:', deletedProjectNames);
       
       // 🔄 SISTEMA NUEVO: Usar deleteProject del hook para cada proyecto
-      selectedRowsToDelete.forEach(rowKey => {
-        console.log(`🗑️ Eliminando proyecto ${rowKey} con hook:`, data[rowKey]?.nombreProyecto);
-        deleteProject(rowKey);
-      });
+      // Obtener los IDs reales de los proyectos antes de eliminar
+      const projectIdsToDelete = selectedRowsToDelete
+        .map(rowKey => {
+          const project = data[rowKey];
+          // Usar numeroProyecto o id como identificador real
+          return project?.numeroProyecto || project?.id || rowKey;
+        })
+        .filter(id => id !== undefined && id !== null);
+      
+      console.log('🗑️ IDs de proyectos a eliminar:', projectIdsToDelete);
+      
+      // Eliminar cada proyecto usando su ID real
+      for (const projectId of projectIdsToDelete) {
+        const rowKey = selectedRowsToDelete.find(rk => {
+          const project = data[rk];
+          return (project?.numeroProyecto || project?.id || rk) === projectId;
+        });
+        
+        console.log(`🗑️ Eliminando proyecto ID ${projectId} (fila ${rowKey}):`, data[rowKey]?.nombreProyecto);
+        await deleteProject(projectId);
+      }
       
       console.log('📊 Proyectos eliminados automáticamente con hook');
       
@@ -1020,18 +1204,8 @@ const ExcelGridSimple = () => {
       
       setSyncMessage(`✅ ${selectedRowsToDelete.length} proyecto(s) eliminado(s) exitosamente`);
       
-      // 🔄 PASO 5: SINCRONIZAR CON BACKEND EN BACKGROUND (opcional, no bloqueante)
-      try {
-        const result = await dataService.deleteProjects(selectedRowsToDelete);
-        if (result.success) {
-          console.log('✅ Eliminación sincronizada con backend');
-        } else {
-          console.warn('⚠️ Error de sincronización backend:', result.error);
-          // No mostrar error al usuario, la UI ya está actualizada
-        }
-      } catch (backendError) {
-        console.warn('⚠️ Error backend, pero eliminación local exitosa:', backendError);
-      }
+      // ⚡ NO RECARGAR DESDE BACKEND - La eliminación ya se sincronizó automáticamente
+      // El hook deleteProject ya maneja la sincronización con MySQL en segundo plano
       
       console.log('✅ ELIMINACIÓN COMPLETADA exitosamente');
       

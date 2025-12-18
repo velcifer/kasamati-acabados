@@ -1,10 +1,88 @@
 // 🎯 SERVICIO CENTRALIZADO DE DATOS - SINCRONIZACIÓN AUTOMÁTICA
 // Maneja la sincronización entre ProyectoDetalle y ExcelGrid con fórmulas automáticas
+// 🔄 AHORA TAMBIÉN SINCRONIZA CON MYSQL CUANDO LA API ESTÉ DISPONIBLE
+
+import { proyectosAPI } from './api';
 
 class ProjectDataService {
   constructor() {
     this.listeners = [];
-    this.projects = this.loadFromLocalStorage();
+    // ⚡ Cargar desde localStorage de forma diferida para no bloquear el inicio
+    this.projects = null;
+    this._projectsLoaded = false;
+    this.apiAvailable = false; // Flag para saber si la API está disponible
+    this._isLoadingFromMySQL = false; // Bandera para evitar múltiples cargas simultáneas
+    this._syncingProjects = new Set(); // Set de proyectos que están siendo sincronizados
+    
+    // ⚡ Cargar datos de forma diferida usando requestIdleCallback o setTimeout
+    if (typeof window !== 'undefined') {
+      if (window.requestIdleCallback) {
+        window.requestIdleCallback(() => {
+          this.projects = this.loadFromLocalStorage();
+          this._projectsLoaded = true;
+          this.checkApiAvailability().catch(() => {});
+        }, { timeout: 1000 });
+      } else {
+        setTimeout(() => {
+          this.projects = this.loadFromLocalStorage();
+          this._projectsLoaded = true;
+          this.checkApiAvailability().catch(() => {});
+        }, 50);
+      }
+    } else {
+      // Fallback para SSR
+      this.projects = this.loadFromLocalStorage();
+      this._projectsLoaded = true;
+    }
+  }
+  
+  // 🔍 Método para obtener proyectos (con carga lazy si es necesario)
+  _ensureProjectsLoaded() {
+    if (!this._projectsLoaded) {
+      this.projects = this.loadFromLocalStorage();
+      this._projectsLoaded = true;
+    }
+    return this.projects;
+  }
+
+  // 🔍 Verificar si la API está disponible (no bloqueante, con timeout corto)
+  async checkApiAvailability() {
+    try {
+      console.log('🔍 Verificando disponibilidad de API...');
+      const { checkServerHealth } = await import('./api');
+      // ⚡ Timeout aumentado a 3 segundos para dar más tiempo
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout')), 3000)
+      );
+      
+      const health = await Promise.race([
+        checkServerHealth(),
+        timeoutPromise
+      ]);
+      
+      const wasAvailable = this.apiAvailable;
+      this.apiAvailable = health.status === 'OK' && health.database === 'Connected';
+      
+      if (this.apiAvailable) {
+        if (!wasAvailable) {
+          console.log('✅ API MySQL ahora disponible (cambió de estado)');
+        } else {
+          console.log('✅ API MySQL disponible');
+        }
+        console.log('   Health check:', JSON.stringify(health, null, 2));
+      } else {
+        console.warn('⚠️ API MySQL no disponible');
+        console.warn('   Health check:', JSON.stringify(health, null, 2));
+      }
+    } catch (error) {
+      const wasAvailable = this.apiAvailable;
+      this.apiAvailable = false;
+      if (wasAvailable) {
+        console.warn(`⚠️ API MySQL dejó de estar disponible:`, error.message);
+      } else {
+        console.log(`⏸️ API MySQL no disponible (${error.message})`);
+      }
+    }
   }
 
   // 💾 PERSISTENCIA LOCAL
@@ -40,6 +118,8 @@ class ProjectDataService {
 
   saveToLocalStorage() {
     try {
+      // ⚡ Asegurar que los proyectos estén cargados antes de guardar
+      this._ensureProjectsLoaded();
       // Guardar en la clave principal
       localStorage.setItem('ksamati_projects', JSON.stringify(this.projects));
       // También guardar en la clave cliente/legacy para compatibilidad
@@ -171,18 +251,191 @@ class ProjectDataService {
 
   // 🎯 MÉTODOS DE GESTIÓN DE DATOS
 
-  // Obtener todos los proyectos
-  getAllProjects() {
+  // Obtener todos los proyectos (con carga desde MySQL si está disponible)
+  async getAllProjects() {
+    // ⚡ Asegurar que los proyectos estén cargados
+    this._ensureProjectsLoaded();
+    // ⚡ BANDERA para evitar múltiples llamadas simultáneas
+    if (this._isLoadingFromMySQL) {
+      console.log('⏸️ Ya hay una carga desde MySQL en curso, retornando datos locales');
+      return this.projects;
+    }
+    
+    // Si la API está disponible, intentar cargar desde MySQL (con timeout corto)
+    if (this.apiAvailable) {
+      this._isLoadingFromMySQL = true;
+      try {
+        // Timeout de 10 segundos para dar más tiempo al servidor
+        const timeoutPromise = new Promise((resolve) => 
+          setTimeout(() => resolve({ timeout: true, success: false, error: 'Timeout MySQL' }), 10000)
+        );
+        
+        let result;
+        try {
+          result = await Promise.race([
+            proyectosAPI.getAll(),
+            timeoutPromise
+          ]);
+        } catch (error) {
+          // Si es timeout o cualquier error, usar localStorage inmediatamente
+          if (error.message && (error.message === 'Timeout MySQL' || error.message.includes('Timeout'))) {
+            console.warn('⚠️ Timeout cargando desde MySQL (10s), usando localStorage');
+          }
+          this._isLoadingFromMySQL = false;
+          return this.projects;
+        }
+        
+        // ⚡ Verificar si es timeout (objeto especial retornado por timeoutPromise)
+        if (result && result.timeout === true) {
+          console.warn('⚠️ Timeout cargando desde MySQL (10s), usando localStorage');
+          this._isLoadingFromMySQL = false;
+          return this.projects;
+        }
+        
+        // Si hay proyectos o la respuesta es exitosa, cargarlos
+        if (result && result.success && result.data && Array.isArray(result.data)) {
+          // ⚡ PRESERVAR categorías guardadas en localStorage antes de sobrescribir
+          const localProjects = { ...this.projects };
+          
+          // Convertir proyectos de API al formato interno
+          const projectsFromAPI = {};
+          result.data.forEach(project => {
+            const projectId = project.id || project.numero_proyecto;
+            
+            // ⚡ PRESERVAR categorías guardadas localmente si las categorías desde MySQL están vacías
+            const localProject = localProjects[projectId];
+            const categoriasFromMySQL = project.categorias && Array.isArray(project.categorias) && project.categorias.length === 24 
+              ? project.categorias 
+              : null;
+            
+            // Si hay categorías guardadas localmente y MySQL no tiene categorías completas, preservar las locales
+            let categoriasFinales;
+            if (categoriasFromMySQL) {
+              // MySQL tiene categorías completas, usarlas
+              categoriasFinales = categoriasFromMySQL;
+            } else if (localProject && localProject.categorias && Array.isArray(localProject.categorias) && localProject.categorias.length === 24) {
+              // MySQL no tiene categorías, pero localStorage sí, preservar las locales
+              console.log(`💾 Preservando categorías guardadas localmente para Proyecto ${projectId} (MySQL no tiene categorías)`);
+              categoriasFinales = localProject.categorias;
+            } else {
+              // No hay categorías en ningún lado, usar las por defecto
+              categoriasFinales = [...this.getInitialProjects()[1].categorias];
+            }
+            
+            projectsFromAPI[projectId] = {
+              id: projectId,
+              numeroProyecto: project.numero_proyecto || projectId,
+              nombreProyecto: project.nombre_proyecto || project.nombreProyecto,
+              nombreCliente: project.nombre_cliente || project.nombreCliente,
+              estadoProyecto: project.estado_proyecto || project.estadoProyecto,
+              tipoProyecto: project.tipo_proyecto || project.tipoProyecto,
+              montoContrato: parseFloat(String(project.monto_contrato || project.montoContrato).replace(/[$/,\s]/g, '')) || 0,
+              presupuestoProyecto: parseFloat(String(project.presupuesto_proyecto || project.presupuestoProyecto).replace(/[$/,\s]/g, '')) || 0,
+              balanceDelPresupuesto: parseFloat(String(project.balance_del_presupuesto || project.balanceDelPresupuesto).replace(/[$/,\s]/g, '')) || 0,
+              utilidadEstimadaSinFactura: parseFloat(String(project.utilidad_estimada_sin_factura || project.utilidadEstimadaSinFactura).replace(/[$/,\s]/g, '')) || 0,
+              utilidadRealSinFactura: parseFloat(String(project.utilidad_real_sin_factura || project.utilidadRealSinFactura).replace(/[$/,\s]/g, '')) || 0,
+              utilidadEstimadaConFactura: parseFloat(String(project.utilidad_estimada_facturado || project.utilidadEstimadaConFactura).replace(/[$/,\s]/g, '')) || 0,
+              utilidadRealConFactura: parseFloat(String(project.utilidad_real_facturado || project.utilidadRealConFactura).replace(/[$/,\s]/g, '')) || 0,
+              totalContratoProveedores: parseFloat(String(project.total_contrato_proveedores || project.totalContratoProveedores).replace(/[$/,\s]/g, '')) || 0,
+              totalSaldoPorPagarProveedores: parseFloat(String(project.saldo_pagar_proveedores || project.totalSaldoPorPagarProveedores).replace(/[$/,\s]/g, '')) || 0,
+              adelantos: parseFloat(String(project.adelantos_cliente || project.adelantos).replace(/[$/,\s]/g, '')) || 0,
+              saldoXCobrar: parseFloat(String(project.saldos_cobrar_proyecto || project.saldoXCobrar).replace(/[$/,\s]/g, '')) || 0,
+              creditoFiscal: parseFloat(String(project.credito_fiscal || project.creditoFiscal).replace(/[$/,\s]/g, '')) || 0,
+              creditoFiscalEstimado: parseFloat(String(project.credito_fiscal_estimado || project.creditoFiscalEstimado).replace(/[$/,\s]/g, '')) || 0,
+              creditoFiscalReal: parseFloat(String(project.credito_fiscal_real || project.creditoFiscalReal).replace(/[$/,\s]/g, '')) || 0,
+              impuestoRealDelProyecto: parseFloat(String(project.impuesto_real_del_proyecto || project.impuestoRealDelProyecto).replace(/[$/,\s]/g, '')) || 0,
+              categorias: categoriasFinales,
+              lastUpdated: new Date().toISOString()
+            };
+            
+            // ⚡ Preservar otros campos importantes de localStorage si existen
+            if (localProject) {
+              // Preservar cobranzas y otros campos que MySQL podría no tener
+              if (localProject.cobranzas && Array.isArray(localProject.cobranzas)) {
+                projectsFromAPI[projectId].cobranzas = localProject.cobranzas;
+              }
+              if (localProject.observacionesDelProyecto) {
+                projectsFromAPI[projectId].observacionesDelProyecto = localProject.observacionesDelProyecto;
+              }
+            }
+          });
+          
+          // ⚡ Asegurar que todos los proyectos tengan las 24 categorías (solo si realmente faltan)
+          Object.keys(projectsFromAPI).forEach(projectId => {
+            const project = projectsFromAPI[projectId];
+            if (!project.categorias || project.categorias.length !== 24) {
+              // Intentar obtener del proyecto local primero
+              const localProject = localProjects[projectId];
+              if (localProject && localProject.categorias && Array.isArray(localProject.categorias) && localProject.categorias.length === 24) {
+                console.log(`💾 Preservando categorías guardadas localmente para Proyecto ${projectId} (faltaban en MySQL)`);
+                project.categorias = localProject.categorias;
+              } else {
+                console.log(`🔧 Inicializando categorías faltantes para Proyecto ${projectId} desde MySQL`);
+                project.categorias = [...this.getInitialProjects()[1].categorias];
+              }
+            }
+          });
+          
+          // Actualizar proyectos locales con datos de MySQL (SIEMPRE, incluso si está vacío)
+          // ⚡ Solo notificar listeners si hay cambios reales para evitar bucles infinitos
+          const projectsChanged = JSON.stringify(this.projects) !== JSON.stringify(projectsFromAPI);
+          this.projects = projectsFromAPI;
+          this.saveToLocalStorage();
+          
+          // Solo notificar si hubo cambios reales
+          if (projectsChanged) {
+            this.notifyListeners();
+          }
+          
+          console.log(`✅ ${Object.keys(projectsFromAPI).length} proyectos cargados desde MySQL`);
+          this._isLoadingFromMySQL = false;
+          return this.projects;
+        } else {
+          // Si la respuesta es exitosa pero no hay proyectos, limpiar localStorage también
+          // ⚡ Solo notificar si había proyectos antes (evitar notificaciones innecesarias)
+          const hadProjects = Object.keys(this.projects).length > 0;
+          console.log('📭 No hay proyectos en MySQL, limpiando datos locales');
+          this.projects = {};
+          this.saveToLocalStorage();
+          
+          // Solo notificar si había proyectos antes
+          if (hadProjects) {
+            this.notifyListeners();
+          }
+          
+          this._isLoadingFromMySQL = false;
+          return this.projects;
+        }
+      } catch (error) {
+        // Si es timeout o error, usar localStorage inmediatamente
+        // No loguear errores de timeout, son esperados cuando el servidor no está disponible
+        if (error.message !== 'Timeout MySQL' && !error.message.includes('Timeout')) {
+          console.warn('⚠️ Error cargando proyectos desde MySQL, usando localStorage:', error.message);
+        }
+        // Continuar con localStorage sin esperar más
+        this._isLoadingFromMySQL = false;
+      }
+    }
+    
+    // Retornar proyectos de localStorage (siempre rápido, no async)
+    return this.projects;
+  }
+  
+  // Método síncrono para obtener proyectos rápidamente (sin esperar API)
+  getAllProjectsSync() {
+    this._ensureProjectsLoaded();
     return this.projects;
   }
 
   // Obtener un proyecto específico
   getProject(projectId) {
+    this._ensureProjectsLoaded();
     return this.projects[projectId];
   }
 
   // 🔄 ACTUALIZACIÓN CON FÓRMULAS AUTOMÁTICAS
   updateProject(projectId, updates) {
+    this._ensureProjectsLoaded();
     if (!this.projects[projectId]) {
       console.warn(`Project ${projectId} not found`);
       return;
@@ -329,8 +582,268 @@ class ProjectDataService {
     // 💾 Guardar automáticamente
     this.saveToLocalStorage();
 
-    // 📢 Notificar a todos los listeners
+    // 📢 Notificar a todos los listeners PRIMERO (para actualizar UI inmediatamente)
     this.notifyListeners();
+
+    // 🔄 SINCRONIZAR CON MYSQL SIEMPRE (en segundo plano, no bloquea)
+    // ⚡ PROTECCIÓN CONTRA BUCLE INFINITO: Solo sincronizar si han pasado al menos 2 segundos desde la última sincronización
+    const syncKey = `sync_${projectId}`;
+    const lastSync = this[syncKey] || 0;
+    const now = Date.now();
+    const timeSinceLastSync = now - lastSync;
+    
+    if (timeSinceLastSync < 2000) {
+      console.log(`⏸️ Omitiendo sincronización: se sincronizó hace ${timeSinceLastSync}ms (mínimo 2000ms)`);
+      return;
+    }
+    
+    this[syncKey] = now;
+    
+    setTimeout(() => {
+      console.log(`🔄 Intentando sincronizar proyecto ${projectId} con MySQL...`);
+      this.syncToMySQL(projectId, this.projects[projectId]).catch(err => {
+        console.error(`❌ Error sincronizando proyecto ${projectId} con MySQL:`, err.message);
+        // NO reintentar automáticamente para evitar bucles infinitos
+      });
+    }, 1000); // Delay aumentado a 1 segundo para evitar bucles
+  }
+
+  // 🔄 SINCRONIZAR PROYECTO CON MYSQL
+  async syncToMySQL(projectId, projectData) {
+    if (!projectId) {
+      console.warn(`⏸️ Omitiendo sincronización: projectId inválido (${projectId})`);
+      return;
+    }
+    
+    // Verificar disponibilidad de API si no está verificada
+    if (!this.apiAvailable) {
+      console.log(`🔄 API no marcada como disponible. Verificando...`);
+      await this.checkApiAvailability();
+    }
+    
+    if (!this.apiAvailable) {
+      console.warn(`⏸️ API no disponible. Omitiendo sincronización para proyecto ${projectId}`);
+      console.warn(`   Los datos se guardaron en localStorage y se sincronizarán cuando la API esté disponible.`);
+      return;
+    }
+    
+    console.log(`✅ API disponible. Sincronizando proyecto ${projectId}...`);
+
+    // ⚡ PROTECCIÓN: Evitar múltiples sincronizaciones simultáneas del mismo proyecto
+    if (this._syncingProjects.has(projectId)) {
+      console.log(`⏸️ Proyecto ${projectId} ya está siendo sincronizado, omitiendo...`);
+      return;
+    }
+
+    // ⚡ PROTECCIÓN ADICIONAL: Verificar si acabamos de sincronizar este proyecto (últimos 3 segundos)
+    const lastSyncKey = `lastSync_${projectId}`;
+    const lastSyncTime = this[lastSyncKey] || 0;
+    const now = Date.now();
+    if (now - lastSyncTime < 3000) { // 3 segundos de cooldown
+      console.log(`⏸️ Proyecto ${projectId} se sincronizó hace menos de 3 segundos, omitiendo...`);
+      return;
+    }
+    this[lastSyncKey] = now;
+
+    // Marcar como sincronizando
+    this._syncingProjects.add(projectId);
+
+    try {
+      // Timeout de 10 segundos para dar más tiempo al servidor
+      const timeoutPromise = new Promise((resolve) => 
+        setTimeout(() => resolve({ timeout: true, success: false, error: 'Timeout' }), 10000)
+      );
+
+      // 💰 Parsear valores monetarios correctamente (pueden venir como "S/0.00" o números)
+      const parseMonetaryValue = (value) => {
+        if (!value && value !== 0) return 0;
+        if (typeof value === 'number') return value;
+        // Si es string, limpiar formato monetario
+        const cleanValue = String(value).replace(/[S$\/,\s]/g, '');
+        const parsed = parseFloat(cleanValue);
+        return isNaN(par) ? 0 : parsed;
+      };
+
+      // Preparar datos para la API (formato esperado por el backend) - ENVIAR TODOS LOS CAMPOS NUMÉRICOS
+      const apiData = {
+        // ⚠️ IMPORTANTE: Incluir numeroProyecto para que el backend pueda encontrar el proyecto si el ID no coincide
+        numeroProyecto: projectData.numeroProyecto || projectData.numero_proyecto || projectId,
+        nombreProyecto: projectData.nombreProyecto || '',
+        nombreCliente: projectData.nombreCliente || '',
+        estadoProyecto: projectData.estadoProyecto || 'Ejecucion',
+        tipoProyecto: projectData.tipoProyecto || 'Recibo',
+        // 💰 TODOS LOS CAMPOS MONETARIOS (asegurar que nunca sean NULL)
+        montoContrato: parseMonetaryValue(projectData.montoContrato),
+        presupuestoProyecto: parseMonetaryValue(projectData.presupuestoProyecto),
+        balanceProyecto: parseMonetaryValue(projectData.balanceDeComprasDelProyecto || projectData.balanceProyecto),
+        utilidadEstimadaSinFactura: parseMonetaryValue(projectData.utilidadEstimadaSinFactura),
+        utilidadRealSinFactura: parseMonetaryValue(projectData.utilidadRealSinFactura),
+        balanceUtilidadSinFactura: parseMonetaryValue(projectData.balanceUtilidadSinFactura),
+        utilidadEstimadaFacturado: parseMonetaryValue(projectData.utilidadEstimadaConFactura),
+        utilidadRealFacturado: parseMonetaryValue(projectData.utilidadRealConFactura),
+        balanceUtilidadConFactura: parseMonetaryValue(projectData.balanceUtilidadConFactura),
+        adelantosCliente: parseMonetaryValue(projectData.adelantos),
+        creditoFiscal: parseMonetaryValue(projectData.creditoFiscalReal || projectData.creditoFiscalEstimado || projectData.creditoFiscal),
+        impuestoRealProyecto: parseMonetaryValue(projectData.impuestoRealDelProyecto),
+        // Campos adicionales importantes
+        totalContratoProveedores: parseMonetaryValue(projectData.totalContratoProveedores),
+        saldoPagarProveedores: parseMonetaryValue(projectData.totalSaldoPorPagarProveedores),
+        saldosCobrarProyecto: parseMonetaryValue(projectData.saldoXCobrar),
+        // 📊 CAMPOS PARA proyecto_detalles (TODOS LOS CAMPOS DEL ESQUEMA)
+        descripcionProyecto: projectData.descripcionProyecto || null,
+        ubicacionProyecto: projectData.ubicacionProyecto || null,
+        fechaInicio: projectData.fechaInicio || null,
+        fechaEstimadaFin: projectData.fechaEstimadaFin || null,
+        presupuestoDelProyecto: parseMonetaryValue(projectData.presupuestoProyecto),
+        totalEgresosProyecto: parseMonetaryValue(projectData.totalEgresosProyecto || projectData.totalRegistroEgresos),
+        balanceDelPresupuesto: parseMonetaryValue(projectData.balanceDelPresupuesto),
+        // ⚠️ IMPORTANTE: igvSunat es un porcentaje (18.00, 19.00), NO un monto
+        // Si viene un valor muy alto, es porque se confundió con impuestoRealProyecto
+        igvSunat: (() => {
+          const igvValue = parseMonetaryValue(projectData.igvSunat);
+          // Si el valor es mayor a 100, probablemente es un monto, no un porcentaje
+          if (igvValue > 100) {
+            console.warn(`⚠️ Valor de igvSunat muy alto (${igvValue}), usando valor por defecto 18.00`);
+            return 18.00;
+          }
+          return igvValue || 18.00;
+        })(),
+        creditoFiscalEstimado: parseMonetaryValue(projectData.creditoFiscalEstimado),
+        impuestoEstimadoDelProyecto: parseMonetaryValue(projectData.impuestoEstimadoDelProyecto),
+        creditoFiscalReal: parseMonetaryValue(projectData.creditoFiscalReal),
+        impuestoRealDelProyecto: parseMonetaryValue(projectData.impuestoRealDelProyecto),
+        saldoXCobrar: parseMonetaryValue(projectData.saldoXCobrar),
+        balanceDeComprasDelProyecto: parseMonetaryValue(projectData.balanceDeComprasDelProyecto),
+        observacionesDelProyecto: projectData.observacionesDelProyecto || null,
+        // 📅 FECHAS ADICIONALES (fecha_1 a fecha_13)
+        fecha1: projectData.fecha1 || projectData.fecha_1 || null,
+        fecha2: projectData.fecha2 || projectData.fecha_2 || null,
+        fecha3: projectData.fecha3 || projectData.fecha_3 || null,
+        fecha4: projectData.fecha4 || projectData.fecha_4 || null,
+        fecha5: projectData.fecha5 || projectData.fecha_5 || null,
+        fecha6: projectData.fecha6 || projectData.fecha_6 || null,
+        fecha7: projectData.fecha7 || projectData.fecha_7 || null,
+        fecha8: projectData.fecha8 || projectData.fecha_8 || null,
+        fecha9: projectData.fecha9 || projectData.fecha_9 || null,
+        fecha10: projectData.fecha10 || projectData.fecha_10 || null,
+        fecha11: projectData.fecha11 || projectData.fecha_11 || null,
+        fecha12: projectData.fecha12 || projectData.fecha_12 || null,
+        fecha13: projectData.fecha13 || projectData.fecha_13 || null,
+        // 🔄 INCLUIR CATEGORÍAS PARA SINCRONIZAR CON MYSQL
+        categorias: projectData.categorias && Array.isArray(projectData.categorias) ? projectData.categorias.map(cat => ({
+          id: cat.id,
+          nombre: cat.nombre || '',
+          tipo: cat.tipo || '',
+          presupuestoDelProyecto: parseMonetaryValue(cat.presupuestoDelProyecto),
+          contratoProvedYServ: parseMonetaryValue(cat.contratoProvedYServ),
+          registroEgresos: parseMonetaryValue(cat.registroEgresos),
+          saldosPorCancelar: parseMonetaryValue(cat.saldosPorCancelar)
+        })) : []
+      };
+      
+      console.log(`💾 Sincronizando proyecto ${projectId} con MySQL:`, {
+        montoContrato: apiData.montoContrato,
+        presupuestoProyecto: apiData.presupuestoProyecto,
+        totalContratoProveedores: apiData.totalContratoProveedores
+      });
+
+      // Intentar actualizar en MySQL con timeout
+      let result;
+      try {
+        result = await Promise.race([
+          proyectosAPI.update(projectId, apiData),
+          timeoutPromise
+        ]);
+        
+        // ⚡ Verificar si es timeout (objeto especial retornado por timeoutPromise)
+        if (result && result.timeout === true) {
+          // Timeout silencioso - agregar a cola offline
+          try {
+            const syncService = await import('./syncService');
+            syncService.default.addOfflineOperation({
+              type: 'update',
+              entityType: 'proyecto',
+              entityId: projectId,
+              data: apiData,
+              priority: 2
+            });
+            console.log(`📋 Operación agregada a cola offline (timeout) para proyecto ${projectId}`);
+          } catch (importError) {}
+          return;
+        }
+      } catch (error) {
+        // Si es timeout o error de red, agregar a cola offline para sincronizar después
+        const isNetworkError = error.message && (
+          error.message.includes('Timeout') || 
+          error.message.includes('Failed to fetch') ||
+          error.message.includes('NetworkError')
+        );
+        
+        if (isNetworkError) {
+          // 🔄 Agregar a cola offline para sincronizar cuando vuelva la conexión
+          try {
+            const syncService = await import('./syncService');
+            syncService.default.addOfflineOperation({
+              type: 'update',
+              entityType: 'proyecto',
+              entityId: projectId,
+              data: apiData,
+              priority: 2 // Prioridad media-alta para actualizaciones
+            });
+            console.log(`📋 Operación agregada a cola offline para proyecto ${projectId}`);
+          } catch (importError) {
+            // Si no se puede importar syncService, continuar sin agregar a cola
+          }
+        } else if (error.message !== 'Timeout' && !error.message.includes('Timeout')) {
+          console.warn(`⚠️ Error sincronizando proyecto ${projectId} con MySQL:`, error.message);
+        }
+        return;
+      }
+      
+      if (result && result.success) {
+        console.log(`✅ Proyecto ${projectId} sincronizado con MySQL exitosamente`);
+        console.log(`   Respuesta del servidor:`, JSON.stringify(result, null, 2));
+      } else if (result && !result.success) {
+        console.error(`❌ Error sincronizando proyecto ${projectId} con MySQL:`, result.error || result.message);
+        console.error(`   Respuesta completa:`, JSON.stringify(result, null, 2));
+      } else {
+        console.warn(`⚠️ Respuesta inesperada del servidor para proyecto ${projectId}:`, result);
+      }
+    } catch (error) {
+      // Si es timeout o error de red, agregar a cola offline para sincronizar después
+      const isNetworkError = error.message && (
+        error.message.includes('Timeout') || 
+        error.message.includes('Failed to fetch') ||
+        error.message.includes('NetworkError')
+      );
+      
+      if (isNetworkError) {
+        // 🔄 Agregar a cola offline para sincronizar cuando vuelva la conexión
+        try {
+          import('./syncService').then(syncService => {
+            syncService.default.addOfflineOperation({
+              type: 'update',
+              entityType: 'proyecto',
+              entityId: projectId,
+              data: projectData,
+              priority: 2
+            });
+          }).catch(() => {
+            // Si no se puede importar, continuar sin agregar a cola
+          });
+        } catch (importError) {
+          // Continuar sin agregar a cola
+        }
+      } else if (error.message !== 'Timeout' && !error.message.includes('Timeout')) {
+        console.warn(`⚠️ Error sincronizando proyecto ${projectId} con MySQL:`, error.message);
+      }
+    } finally {
+      // ⚡ IMPORTANTE: Siempre remover de la lista de sincronización después de un delay
+      // para evitar sincronizaciones muy rápidas que causen bucles
+      setTimeout(() => {
+        this._syncingProjects.delete(projectId);
+      }, 1000); // 1 segundo de delay antes de permitir otra sincronización
+    }
   }
 
   // 🔍 Helper: Identificar categorías que deben sumarse en el total de "Saldos por cancelar"
@@ -779,23 +1292,29 @@ class ProjectDataService {
     this.listeners.forEach(callback => callback(this.projects));
   }
 
-  // 🆕 CREAR NUEVO PROYECTO
-  createProject(projectData) {
-    // Calcular un ID numérico válido y creciente incluso cuando no hay proyectos
+  // 🆕 CREAR NUEVO PROYECTO (primero local, luego sincroniza en segundo plano)
+  async createProject(projectData) {
+    // ⚡ CREAR PRIMERO EN LOCALSTORAGE (instantáneo)
+    this._ensureProjectsLoaded();
     const numericIds = Object.keys(this.projects)
       .map((id) => Number(id))
       .filter((n) => Number.isFinite(n) && n > 0);
     const newId = numericIds.length > 0 ? Math.max(...numericIds) + 1 : 1;
-    // Asegurar categorías por defecto si no se proporcionan
     const defaultCategories = this.getInitialProjects()[1].categorias;
+    
+    // ⚡ Asegurar que siempre tengamos las 24 categorías por defecto
+    const categoriasFinales = (projectData.categorias && Array.isArray(projectData.categorias) && projectData.categorias.length === 24) 
+      ? projectData.categorias 
+      : [...defaultCategories];
+    
     const newProject = {
       id: newId,
       nombreProyecto: projectData.nombreProyecto || `Proyecto ${newId}`,
       nombreCliente: projectData.nombreCliente || '',
-      estadoProyecto: 'Ejecucion',
-      tipoProyecto: 'Recibo',
-      montoContrato: 0,
-      presupuestoProyecto: 0,
+      estadoProyecto: projectData.estadoProyecto || 'Ejecucion',
+      tipoProyecto: projectData.tipoProyecto || 'Recibo',
+      montoContrato: projectData.montoContrato || 0,
+      presupuestoProyecto: projectData.presupuestoProyecto || 0,
       utilidadEstimadaSinFactura: 0,
       utilidadRealSinFactura: 0,
       utilidadEstimadaConFactura: 0,
@@ -803,39 +1322,224 @@ class ProjectDataService {
       totalContratoProveedores: 0,
       totalSaldoPorPagarProveedores: 0,
       balanceDeComprasDelProyecto: 0,
-      adelantos: 0,
+      adelantos: projectData.adelantos || 0,
       saldoXCobrar: 0,
       creditoFiscal: 0,
       creditoFiscalEstimado: 0,
       creditoFiscalReal: 0,
       impuestoRealDelProyecto: 0,
       impuestoEstimadoDelProyecto: 0,
-      categorias: (projectData.categorias && projectData.categorias.length > 0) ? projectData.categorias : [...defaultCategories],
+      categorias: categoriasFinales, // ⚡ SIEMPRE usar las 24 categorías por defecto
       lastUpdated: new Date().toISOString(),
-      ...projectData
+      // ⚡ NO usar ...projectData aquí porque puede sobrescribir categorias
+      // Solo usar campos específicos que no hayamos definido arriba
+      cobranzas: projectData.cobranzas || [],
+      observacionesDelProyecto: projectData.observacionesDelProyecto || ''
     };
 
+    // Guardar inmediatamente en localStorage y notificar
     this.projects[newId] = newProject;
-
-    // Calcular fórmulas iniciales para que los totales se muestren inmediatamente
     this.calculateFormulas(newId);
-
     this.saveToLocalStorage();
-    this.notifyListeners();
+    this.notifyListeners(); // ⚡ Notificar inmediatamente para que aparezca en la UI
+    
+    console.log(`✅ Proyecto ${newId} creado localmente`);
+
+    // 🔄 SINCRONIZAR CON MYSQL EN SEGUNDO PLANO (no bloquea)
+    // Intentar siempre, incluso si apiAvailable es false (puede haber cambiado)
+    setTimeout(() => {
+      console.log(`🔄 Intentando sincronizar creación de proyecto ${newId} con MySQL...`);
+      this.syncCreateToMySQL(newId, newProject).catch(err => {
+        console.error(`❌ Error sincronizando creación con MySQL:`, err.message);
+        console.error(`   Stack:`, err.stack);
+        // Verificar si es porque la API no está disponible
+        if (!this.apiAvailable) {
+          console.warn(`⚠️ API no disponible. Verificando disponibilidad...`);
+          this.checkApiAvailability().then(() => {
+            if (this.apiAvailable) {
+              console.log(`✅ API ahora disponible. Reintentando sincronización...`);
+              this.syncCreateToMySQL(newId, newProject).catch(retryErr => {
+                console.error(`❌ Error en reintento de sincronización:`, retryErr.message);
+              });
+            }
+          });
+        }
+      });
+    }, 100);
+
     return newProject;
   }
 
-  // ❌ ELIMINAR PROYECTO
-  deleteProject(projectId) {
-    if (this.projects[projectId]) {
-      delete this.projects[projectId];
-      this.saveToLocalStorage();
-      this.notifyListeners();
+  // 🔄 Sincronizar creación con MySQL en segundo plano
+  async syncCreateToMySQL(projectId, projectData) {
+    if (!this.apiAvailable || !projectId) {
+      console.log('⚠️ API no disponible o projectId inválido, omitiendo sincronización MySQL');
+      return;
+    }
+    try {
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout')), 3000)
+      );
+
+      // 💰 Parsear valores monetarios correctamente (pueden venir como "S/0.00" o números)
+      const parseMonetaryValue = (value) => {
+        if (!value) return 0;
+        if (typeof value === 'number') return value;
+        // Si es string, limpiar formato monetario
+        const cleanValue = String(value).replace(/[S$\/,\s]/g, '');
+        return parseFloat(cleanValue) || 0;
+      };
+
+      const apiData = {
+        nombreProyecto: projectData.nombreProyecto || 'Nuevo Proyecto',
+        nombreCliente: projectData.nombreCliente || '',
+        estadoProyecto: projectData.estadoProyecto || 'Ejecucion',
+        tipoProyecto: projectData.tipoProyecto || 'Recibo',
+        montoContrato: parseMonetaryValue(projectData.montoContrato),
+        presupuestoProyecto: parseMonetaryValue(projectData.presupuestoProyecto),
+        adelantosCliente: parseMonetaryValue(projectData.adelantos)
+      };
+
+      console.log(`📤 Enviando datos a API POST /api/proyectos:`, apiData);
+      
+      const result = await Promise.race([
+        proyectosAPI.create(apiData),
+        timeoutPromise
+      ]);
+      
+      console.log(`📥 Respuesta recibida de API para creación:`, result);
+      
+      if (result.success && result.data) {
+        // ⚠️ IMPORTANTE: Actualizar el ID local con el ID de MySQL
+        const realId = result.data.id;
+        if (realId && realId !== projectId) {
+          console.log(`🔄 Actualizando ID local: ${projectId} -> ${realId}`);
+          // Mover proyecto al nuevo ID
+          const proyectoActualizado = { ...this.projects[projectId], id: realId };
+          this.projects[realId] = proyectoActualizado;
+          delete this.projects[projectId];
+          this.saveToLocalStorage();
+          this.notifyListeners();
+          console.log(`✅ Proyecto movido de ID ${projectId} a ID ${realId} en localStorage`);
+        } else if (realId) {
+          // Si el ID es el mismo, asegurarse de que esté correcto
+          this.projects[projectId].id = realId;
+          this.saveToLocalStorage();
+          console.log(`✅ Proyecto ${projectId} confirmado con ID ${realId} en MySQL`);
+        } else {
+          console.warn(`⚠️ La respuesta del servidor no incluye ID. Respuesta:`, result);
+        }
+      } else {
+        console.warn(`⚠️ Respuesta del servidor no exitosa o sin data:`, result);
+      }
+    } catch (error) {
+      // Si es timeout o error de red, agregar a cola offline para sincronizar después
+      const isNetworkError = error.message && (
+        error.message.includes('Timeout') || 
+        error.message.includes('Failed to fetch') ||
+        error.message.includes('NetworkError')
+      );
+      
+      if (isNetworkError) {
+        // 🔄 Agregar a cola offline para sincronizar cuando vuelva la conexión
+        try {
+          import('./syncService').then(syncService => {
+            syncService.default.addOfflineOperation({
+              type: 'create',
+              entityType: 'proyecto',
+              entityId: projectId,
+              data: projectData,
+              priority: 3 // Prioridad alta para creaciones
+            });
+            console.log(`📋 Creación agregada a cola offline para proyecto ${projectId}`);
+          }).catch(() => {
+            // Si no se puede importar, continuar sin agregar a cola
+          });
+        } catch (importError) {
+          // Continuar sin agregar a cola
+        }
+      } else if (error.message !== 'Timeout' && !error.message.includes('Timeout')) {
+        console.warn(`⚠️ Error sincronizando creación:`, error.message);
+      }
+    }
+  }
+
+  // ❌ ELIMINAR PROYECTO (primero local, luego sincroniza en segundo plano)
+  async deleteProject(projectId) {
+    this._ensureProjectsLoaded();
+    if (!this.projects[projectId]) return;
+
+    // ⚡ ELIMINAR PRIMERO DE LOCALSTORAGE (instantáneo)
+    delete this.projects[projectId];
+    this.saveToLocalStorage();
+    this.notifyListeners(); // ⚡ Notificar inmediatamente para que desaparezca de la UI
+    
+    console.log(`✅ Proyecto ${projectId} eliminado localmente`);
+
+    // 🔄 SINCRONIZAR CON MYSQL EN SEGUNDO PLANO (no bloquea)
+    // Intentar siempre, incluso si apiAvailable es false (puede haber cambiado)
+    setTimeout(() => {
+      console.log(`🔄 Intentando sincronizar eliminación de proyecto ${projectId} con MySQL...`);
+      this.syncDeleteToMySQL(projectId).catch(err => {
+        console.error(`❌ Error sincronizando eliminación con MySQL:`, err.message);
+        console.error(`   Stack:`, err.stack);
+        // Verificar si es porque la API no está disponible
+        if (!this.apiAvailable) {
+          console.warn(`⚠️ API no disponible. Verificando disponibilidad...`);
+          this.checkApiAvailability().then(() => {
+            if (this.apiAvailable) {
+              console.log(`✅ API ahora disponible. Reintentando sincronización...`);
+              this.syncDeleteToMySQL(projectId).catch(retryErr => {
+                console.error(`❌ Error en reintento de sincronización:`, retryErr.message);
+              });
+            }
+          });
+        }
+      });
+    }, 100);
+  }
+
+  // 🔄 Sincronizar eliminación con MySQL en segundo plano (MÁS ROBUSTO)
+  async syncDeleteToMySQL(projectId) {
+    if (!this.apiAvailable) {
+      console.warn(`⚠️ API no disponible, proyecto ${projectId} eliminado solo localmente`);
+      return;
+    }
+    
+    try {
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout eliminación')), 5000) // 5 segundos para eliminación
+      );
+
+      console.log(`📤 Enviando DELETE a API /api/proyectos para proyecto ${projectId}`);
+      
+      const result = await Promise.race([
+        proyectosAPI.delete([projectId]),
+        timeoutPromise
+      ]);
+      
+      console.log(`📥 Respuesta recibida de API para eliminación:`, result);
+      
+      if (result.success) {
+        console.log(`✅ Proyecto ${projectId} eliminado de MySQL correctamente`);
+        // ⚡ NO RECARGAR TODA LA LISTA - Ya está eliminado localmente y en MySQL
+        // Solo notificar a los listeners para que actualicen la UI si es necesario
+        // La recarga completa causa lentitud y problemas de sincronización
+      } else {
+        console.error(`❌ Error eliminando proyecto ${projectId} de MySQL:`, result.error);
+      }
+    } catch (error) {
+      if (error.message === 'Timeout eliminación') {
+        console.error(`❌ Timeout eliminando proyecto ${projectId} de MySQL (5s)`);
+      } else {
+        console.error(`❌ Error eliminando proyecto ${projectId} de MySQL:`, error.message);
+      }
     }
   }
 
   // 🔄 ACTUALIZAR CATEGORÍA (con recálculo automático)
   updateProjectCategory(projectId, categoryId, updates) {
+    this._ensureProjectsLoaded();
     const project = this.projects[projectId];
     if (!project || !project.categorias) return;
 
@@ -854,8 +1558,33 @@ class ProjectDataService {
     
     console.log(`💾 SERVICIO: Categoría "${project.categorias[categoryIndex].nombre}" actualizada. Total Contrato=${project.totalContratoProveedores}, Total Egresos=${project.totalRegistroEgresos}`);
     
+    // 💾 Guardar automáticamente en localStorage
     this.saveToLocalStorage();
+    
+    // 📢 Notificar a todos los listeners PRIMERO (para actualizar UI inmediatamente)
     this.notifyListeners();
+
+    // 🔄 SINCRONIZAR CON MYSQL SIEMPRE (en segundo plano, no bloquea)
+    // ⚡ IMPORTANTE: Sincronizar el proyecto completo con las categorías actualizadas
+    setTimeout(() => {
+      console.log(`🔄 Intentando sincronizar categoría del proyecto ${projectId} con MySQL...`);
+      this.syncToMySQL(projectId, this.projects[projectId]).catch(err => {
+        console.error(`❌ Error sincronizando categoría con MySQL:`, err.message);
+        console.error(`   Stack:`, err.stack);
+        // Verificar si es porque la API no está disponible
+        if (!this.apiAvailable) {
+          console.warn(`⚠️ API no disponible. Verificando disponibilidad...`);
+          this.checkApiAvailability().then(() => {
+            if (this.apiAvailable) {
+              console.log(`✅ API ahora disponible. Reintentando sincronización...`);
+              this.syncToMySQL(projectId, this.projects[projectId]).catch(retryErr => {
+                console.error(`❌ Error en reintento de sincronización:`, retryErr.message);
+              });
+            }
+          });
+        }
+      });
+    }, 100); // Pequeño delay para evitar bucles
   }
 }
 

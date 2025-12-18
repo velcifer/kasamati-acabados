@@ -1,0 +1,52 @@
+═══════════════════════════════════════════════════════════════
+  🚀 PASOS RÁPIDOS: HABILITAR REMOTE MYSQL EN CPANEL
+═══════════════════════════════════════════════════════════════
+
+1️⃣  INICIA SESIÓN EN CPANEL
+   └─ Usa tus credenciales de hosting
+
+2️⃣  BUSCA LA SECCIÓN "BASES DE DATOS" O "DATABASES"
+   └─ Está en el panel principal de cPanel
+
+3️⃣  HAZ CLIC EN "MYSQL REMOTO" O "REMOTE MYSQL"
+   └─ Está dentro de la sección de Bases de datos
+   └─ Si no lo ves, usa la barra de búsqueda de cPanel
+
+4️⃣  OBTÉN TU IP ACTUAL
+   └─ Visita: https://whatismyipaddress.com/
+   └─ O busca en Google: "cuál es mi ip"
+   └─ Copia tu IP (ejemplo: 123.45.67.89)
+
+5️⃣  AGREGA TU IP
+   └─ En el campo "Host (% comodín permitido)" o "Access Host"
+   └─ Pega tu IP (ejemplo: 123.45.67.89)
+   └─ O escribe % para permitir todas las IPs (solo pruebas)
+   └─ Haz clic en "Añadir host" o "Add Host"
+
+6️⃣  VERIFICA
+   └─ Tu IP debería aparecer en la lista de "Access Hosts"
+   └─ Espera 1-2 minutos para que se apliquen los cambios
+
+7️⃣  PRUEBA LA CONEXIÓN
+   └─ Ejecuta: node verificar-usuario-actual.js
+
+═══════════════════════════════════════════════════════════════
+  📍 UBICACIÓN EXACTA EN CPANEL:
+═══════════════════════════════════════════════════════════════
+
+CPANEL → BASES DE DATOS → MySQL Remoto
+     o
+CPANEL → DATABASES → Remote MySQL
+
+═══════════════════════════════════════════════════════════════
+  💡 TIPS:
+═══════════════════════════════════════════════════════════════
+
+✅ Usa % solo para pruebas/desarrollo
+✅ En producción, agrega solo IPs específicas
+✅ Si no encuentras Remote MySQL, contacta a tu hosting
+✅ Los cambios suelen aplicarse inmediatamente
+
+═══════════════════════════════════════════════════════════════
+
+
