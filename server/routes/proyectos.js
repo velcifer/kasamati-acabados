@@ -3,6 +3,18 @@ const express = require('express');
 const router = express.Router();
 const { executeQuery, executeTransaction, dbConfig } = require('../config/database');
 
+// Valores permitidos para el campo estado_proyecto en la base de datos
+const ALLOWED_ESTADOS = ['Ejecucion', 'Recibo', 'Completado'];
+
+// Normalizar/sanitizar el valor de estado_proyecto recibido desde el cliente
+const sanitizeEstadoProyecto = (value) => {
+  if (value === undefined || value === null) return 'Ejecucion';
+  const v = String(value).trim();
+  if (ALLOWED_ESTADOS.includes(v)) return v;
+  console.warn(`⚠️ Estado_proyecto inválido recibido: "${v}". Se usará 'Ejecucion' por seguridad.`);
+  return 'Ejecucion';
+};
+
 // Cache columns de proyecto_detalles para no romper si la tabla es diferente en el entorno actual
 const detalleColumnCache = new Set();
 const loadDetalleColumns = async () => {
@@ -298,7 +310,7 @@ router.post('/', async (req, res) => {
         `,
         params: [
           numeroProyecto, nombreProyecto, nombreCliente,
-          estadoProyecto, tipoProyecto, montoLimpio,
+          sanitizeEstadoProyecto(estadoProyecto), tipoProyecto, montoLimpio,
           presupuestoLimpio, adelantosLimpio
         ]
       }
@@ -512,7 +524,7 @@ router.put('/:id', async (req, res) => {
     const updateResult = await executeQuery(updateProyectoQuery, [
       projectData.nombreProyecto || '',
       projectData.nombreCliente || '',
-      projectData.estadoProyecto || projectData.estado || 'Ejecucion',
+      sanitizeEstadoProyecto(projectData.estadoProyecto || projectData.estado || 'Ejecucion'),
       projectData.tipoProyecto || projectData.tipo || 'Recibo',
       parseAmount(projectData.montoContrato),
       parseAmount(projectData.presupuestoProyecto || projectData.presupuestoDelProyecto),

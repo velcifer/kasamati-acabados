@@ -1698,16 +1698,36 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
 
   // 🔄 AUTO-SAVE: Handler para campos del proyecto (nuevo sistema)
   const handleInputChange = (field, value) => {
-    // Sistema de auto-sync: cualquier cambio se guarda automáticamente
-    if (updateField) {
-      updateField(field, value);
-    }
-    
-    // Mantener compatibilidad con estado local
-    setProjectData(prev => ({
+    // Evitar envíos redundantes: comparar antes de enviar
+    try {
+      const monetaryProjectFields = new Set(['montoContrato','adelantos','presupuestoDelProyecto','utilidadEstimadaSinFactura','utilidadEstimadaConFactura','totalContratoProveedores','totalSaldoPorPagarProveedores','balanceDeComprasDelProyecto']);
+
+      let shouldUpdate = true;
+      // Comparar como número si es un campo monetario
+      if (monetaryProjectFields.has(field)) {
+        const newNum = (typeof value === 'number') ? value : parseMonetary(value);
+        const currNum = parseMonetary(projectData[field] || 0);
+        if (newNum === currNum) shouldUpdate = false;
+        else value = newNum; // enviar número canónico
+      } else {
+        // Comparación simple para campos no monetarios
+        const curr = projectData[field];
+        if (curr === value) shouldUpdate = false;
+      }
+
+      // Sistema de auto-sync: sólo si cambió
+      if (shouldUpdate && updateField) {
+        updateField(field, value);
+      }
+
+      // Mantener compatibilidad con estado local
+      setProjectData(prev => ({
         ...prev,
         [field]: value
-    }));
+      }));
+    } catch (e) {
+      console.warn('handleInputChange error', e);
+    }
 
     // Persistencia redundante: guardar en localStores para asegurar último estado
     try {
@@ -1749,7 +1769,18 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     
     // Actualizar el campo modificado PRIMERO en el servicio (para guardar en BD)
     if (updateCategory) {
-      updateCategory(categoriaId, { [field]: finalValue });
+      try {
+        const existingCat = (projectData.categorias || []).find(c => c.id === categoriaId);
+        const existingVal = existingCat ? parseMonetary(existingCat[field]) : 0;
+        if (existingVal !== finalValue) {
+          updateCategory(categoriaId, { [field]: finalValue });
+        } else {
+          // No hay cambio real: evitar envío redundante
+          console.log(`skip updateCategory ${categoriaId} ${field}: sin cambio`);
+        }
+      } catch (e) {
+        updateCategory(categoriaId, { [field]: finalValue });
+      }
     }
     
     // Actualizar estado local INMEDIATAMENTE (para mostrar el valor formateado)
@@ -1773,7 +1804,17 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
           
           // Actualizar también en el servicio (guardar número sin formato)
           if (updateCategory) {
-            updateCategory(categoriaId, { saldosPorCancelar: saldosCalculados });
+            try {
+              const existingCat2 = (projectData.categorias || []).find(c => c.id === categoriaId);
+              const existingSaldos = existingCat2 ? parseMonetary(existingCat2.saldosPorCancelar) : 0;
+              if (existingSaldos !== saldosCalculados) {
+                updateCategory(categoriaId, { saldosPorCancelar: saldosCalculados });
+              } else {
+                console.log(`skip updateCategory ${categoriaId} saldosPorCancelar: sin cambio`);
+              }
+            } catch (e) {
+              updateCategory(categoriaId, { saldosPorCancelar: saldosCalculados });
+            }
           }
         }
         
@@ -1807,17 +1848,26 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       const cleanedValue = value.toString().replace(/[^0-9.,-]/g, '');
       setEditingValues(prev => ({ ...prev, [cellKey]: cleanedValue }));
     } else {
-    // Sistema de auto-sync: cualquier cambio se guarda automáticamente
-    if (updateCategory) {
-        updateCategory(categoriaId, { [field]: value });
+      // Sistema de auto-sync: sólo enviar si cambió (evita bucles)
+      try {
+        const cat = (projectData.categorias || []).find(c => c.id === categoriaId);
+        const currVal = cat ? cat[field] : undefined;
+        if (currVal !== value) {
+          if (updateCategory) {
+            updateCategory(categoriaId, { [field]: value });
+          }
+        }
+      } catch (e) {
+        if (updateCategory) updateCategory(categoriaId, { [field]: value });
       }
-    // Mantener compatibilidad con estado local
-    setProjectData(prev => ({
-      ...prev,
-      categorias: prev.categorias.map(cat => 
-        cat.id === categoriaId ? { ...cat, [field]: value } : cat
-      )
-    }));
+
+      // Mantener compatibilidad con estado local
+      setProjectData(prev => ({
+        ...prev,
+        categorias: prev.categorias.map(cat => 
+          cat.id === categoriaId ? { ...cat, [field]: value } : cat
+        )
+      }));
     }
   };
 

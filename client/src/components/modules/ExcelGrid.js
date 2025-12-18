@@ -42,7 +42,7 @@ const ExcelGrid = () => {
     { key: 'row', title: '#', width: '60px', type: 'row-number', section: 'general' },
     { key: 'nombreProyecto', title: 'Proyecto', width: '140px', type: 'text', section: 'general' },
     { key: 'nombreCliente', title: 'Cliente', width: '130px', type: 'text', section: 'general' },
-    { key: 'estadoProyecto', title: 'Estado', width: '100px', type: 'select', options: ['Ejecucion', 'Recibo', 'Completado', 'Pausado'], section: 'general' },
+  { key: 'estadoProyecto', title: 'Estado', width: '100px', type: 'select', options: ['Ejecucion', 'Recibo', 'Completado'], section: 'general' },
     { key: 'tipoProyecto', title: 'Tipo', width: '90px', type: 'select', options: ['Recibo', 'Contrato', 'Servicio'], section: 'general' },
     { key: 'montoProyecto', title: 'Monto', width: '100px', type: 'currency', section: 'general' },
     { key: 'presupuestoProyecto', title: 'Presup.', width: '100px', type: 'currency', section: 'general' },

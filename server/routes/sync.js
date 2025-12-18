@@ -4,6 +4,17 @@ const crypto = require('crypto');
 const router = express.Router();
 const { executeQuery, executeTransaction } = require('../config/database');
 
+// Valores permitidos para estado_proyecto (coinciden con ENUM en la BD)
+const ALLOWED_ESTADOS_SYNC = ['Ejecucion', 'Recibo', 'Completado'];
+
+const sanitizeEstadoForSync = (value) => {
+  if (value === undefined || value === null) return 'Ejecucion';
+  const v = String(value).trim();
+  if (ALLOWED_ESTADOS_SYNC.includes(v)) return v;
+  console.warn(`⚠️ sync: estadoProyecto inválido recibido: "${v}". Se usará 'Ejecucion'.`);
+  return 'Ejecucion';
+};
+
 // 🔧 Función helper para calcular hash MD5 de datos
 const calculateHash = (data) => {
   return crypto.createHash('md5').update(JSON.stringify(data)).digest('hex');
@@ -483,7 +494,7 @@ async function processProjectOperation(operation, projectId, data) {
           updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `, [
-        data.nombreProyecto, data.nombreCliente, data.estadoProyecto || 'Ejecucion',
+  data.nombreProyecto, data.nombreCliente, sanitizeEstadoForSync(data.estadoProyecto || 'Ejecucion'),
         data.tipoProyecto || 'Recibo', parseFloat(data.montoContrato || 0),
         parseFloat(data.presupuestoProyecto || 0), parseFloat(data.utilidadEstimadaSinFactura || 0),
         parseFloat(data.utilidadRealSinFactura || 0), parseFloat(data.utilidadEstimadaFacturado || 0),

@@ -3,7 +3,8 @@ const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
 const path = require('path');
-require('dotenv').config();
+// Forzar carga del .env dentro de la carpeta server (evita que use otro .env en la raíz)
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 // 🗄️ Importar configuración de base de datos
 const { testConnection, getDatabaseStats } = require('./config/database');

@@ -27,6 +27,13 @@ const dbConfig = {
 };
 
 // 🔗 POOL DE CONEXIONES
+console.log('DB config (env):', {
+  DB_HOST: process.env.DB_HOST,
+  DB_PORT: process.env.DB_PORT,
+  DB_USER: process.env.DB_USER ? '***' : undefined,
+  DB_NAME: process.env.DB_NAME
+});
+console.log('DB config (final):', { host: dbConfig.host, port: dbConfig.port, database: dbConfig.database });
 const pool = mysql.createPool(dbConfig);
 
 // 🧪 FUNCIÓN PARA PROBAR CONEXIÓN
