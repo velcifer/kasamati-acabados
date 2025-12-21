@@ -1557,6 +1557,12 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
   useEffect(() => {
     if (!project) return;
 
+    // Si hay celdas en edición, no sobrescribir el estado local desde el servicio
+    if (editingCells && Object.keys(editingCells).length > 0) {
+      console.log('ProyectoDetalle: sync skipped because user is editing cells', Object.keys(editingCells));
+      return;
+    }
+
     try {
       setProjectData(prev => {
         // ⚡ Asegurar que siempre tengamos las 24 categorías por defecto

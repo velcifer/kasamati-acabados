@@ -61,6 +61,24 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+// Endpoint temporal para pruebas de conectividad a la BD desde el despliegue
+app.get('/api/db-test', async (req, res) => {
+  try {
+    // Ejecutar testConnection que ya imprime en logs
+    const connected = await testConnection();
+
+    // No devolvemos credenciales en la respuesta, solo el resultado y un mensaje
+    res.json({
+      ok: true,
+      connected,
+      message: connected ? 'Database reachable from this host' : 'Database NOT reachable from this host'
+    });
+  } catch (err) {
+    console.error('DB test endpoint error:', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // Rutas para funcionalidades principales
 app.use('/api/ventas', require('./routes/ventas'));
 app.use('/api/proyectos', require('./routes/proyectos'));
