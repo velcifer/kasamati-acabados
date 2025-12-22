@@ -14,6 +14,8 @@ const dbConfig = {
   password: process.env.DB_PASSWORD || 'SXQEOCvtQDZRPaMYQCueobuZAUsBIhxL',
   database: process.env.DB_NAME || 'railway',
   port: process.env.DB_PORT || 53369,
+
+
   
   // 🔧 CONFIGURACIÓN DE POOL (mysql2 compatible)
   waitForConnections: true,
@@ -34,7 +36,12 @@ console.log('DB config (env):', {
   DB_NAME: process.env.DB_NAME
 });
 console.log('DB config (final):', { host: dbConfig.host, port: dbConfig.port, database: dbConfig.database });
-const pool = mysql.createPool(dbConfig);
+
+// Reusar pool en entornos serverless/funciones para evitar crear múltiples pools
+if (!global.__mysqlPool) {
+  global.__mysqlPool = mysql.createPool(dbConfig);
+}
+const pool = global.__mysqlPool;
 
 // 🧪 FUNCIÓN PARA PROBAR CONEXIÓN
 const testConnection = async () => {
@@ -51,7 +58,9 @@ const testConnection = async () => {
     connection.release();
     return true;
   } catch (error) {
-    console.error('❌ Error de conexión a MySQL:', error.message);
+  console.error('❌ Error de conexión a MySQL:', error.message);
+  console.error('   Código de error:', error.code);
+  console.error('   Stack:', error.stack);
     return false;
   }
 };
