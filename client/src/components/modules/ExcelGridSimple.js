@@ -677,6 +677,10 @@ const ExcelGridSimple = () => {
     // Esperar 10 segundos antes de iniciar el intervalo para no interferir con la carga inicial
     const initialDelay = setTimeout(() => {
       const reloadInterval = setInterval(() => {
+        // Si la API no está disponible (modo solo localStorage), no intentar recargar para evitar bucles
+        if (!projectDataService.apiAvailable) {
+          return;
+        }
         // Solo recargar si no está cargando, no está sincronizando, y la página está visible
         if (!loading && !isSyncing && !document.hidden) {
           console.log('🔄 Recarga automática desde MySQL...');

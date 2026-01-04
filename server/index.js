@@ -81,20 +81,6 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-// Endpoint diagnóstico - devuelve resultado completo de testConnection()
-app.get('/api/db-test', async (req, res) => {
-  try {
-  console.log('[/api/db-test] ejecutando testConnection()');
-  const info = await testConnection();
-  console.log('[/api/db-test] resultado testConnection:', info);
-  // Devolver info completa para debugging remoto (no sensible: no incluye password)
-  res.json({ ok: true, info });
-  } catch (err) {
-  console.error('[/api/db-test] error:', err && err.message);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
 // Rutas para funcionalidades principales
 app.use('/api/ventas', require('./routes/ventas'));
 app.use('/api/proyectos', require('./routes/proyectos'));

@@ -1557,12 +1557,6 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
   useEffect(() => {
     if (!project) return;
 
-    // Si hay celdas en edición, no sobrescribir el estado local desde el servicio
-    if (editingCells && Object.keys(editingCells).length > 0) {
-      console.log('ProyectoDetalle: sync skipped because user is editing cells', Object.keys(editingCells));
-      return;
-    }
-
     try {
       setProjectData(prev => {
         // ⚡ Asegurar que siempre tengamos las 24 categorías por defecto
@@ -1704,36 +1698,16 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
 
   // 🔄 AUTO-SAVE: Handler para campos del proyecto (nuevo sistema)
   const handleInputChange = (field, value) => {
-    // Evitar envíos redundantes: comparar antes de enviar
-    try {
-      const monetaryProjectFields = new Set(['montoContrato','adelantos','presupuestoDelProyecto','utilidadEstimadaSinFactura','utilidadEstimadaConFactura','totalContratoProveedores','totalSaldoPorPagarProveedores','balanceDeComprasDelProyecto']);
-
-      let shouldUpdate = true;
-      // Comparar como número si es un campo monetario
-      if (monetaryProjectFields.has(field)) {
-        const newNum = (typeof value === 'number') ? value : parseMonetary(value);
-        const currNum = parseMonetary(projectData[field] || 0);
-        if (newNum === currNum) shouldUpdate = false;
-        else value = newNum; // enviar número canónico
-      } else {
-        // Comparación simple para campos no monetarios
-        const curr = projectData[field];
-        if (curr === value) shouldUpdate = false;
-      }
-
-      // Sistema de auto-sync: sólo si cambió
-      if (shouldUpdate && updateField) {
-        updateField(field, value);
-      }
-
-      // Mantener compatibilidad con estado local
-      setProjectData(prev => ({
+    // Sistema de auto-sync: cualquier cambio se guarda automáticamente
+    if (updateField) {
+      updateField(field, value);
+    }
+    
+    // Mantener compatibilidad con estado local
+    setProjectData(prev => ({
         ...prev,
         [field]: value
-      }));
-    } catch (e) {
-      console.warn('handleInputChange error', e);
-    }
+    }));
 
     // Persistencia redundante: guardar en localStores para asegurar último estado
     try {
@@ -1775,18 +1749,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
     
     // Actualizar el campo modificado PRIMERO en el servicio (para guardar en BD)
     if (updateCategory) {
-      try {
-        const existingCat = (projectData.categorias || []).find(c => c.id === categoriaId);
-        const existingVal = existingCat ? parseMonetary(existingCat[field]) : 0;
-        if (existingVal !== finalValue) {
-          updateCategory(categoriaId, { [field]: finalValue });
-        } else {
-          // No hay cambio real: evitar envío redundante
-          console.log(`skip updateCategory ${categoriaId} ${field}: sin cambio`);
-        }
-      } catch (e) {
-        updateCategory(categoriaId, { [field]: finalValue });
-      }
+      updateCategory(categoriaId, { [field]: finalValue });
     }
     
     // Actualizar estado local INMEDIATAMENTE (para mostrar el valor formateado)
@@ -1810,17 +1773,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
           
           // Actualizar también en el servicio (guardar número sin formato)
           if (updateCategory) {
-            try {
-              const existingCat2 = (projectData.categorias || []).find(c => c.id === categoriaId);
-              const existingSaldos = existingCat2 ? parseMonetary(existingCat2.saldosPorCancelar) : 0;
-              if (existingSaldos !== saldosCalculados) {
-                updateCategory(categoriaId, { saldosPorCancelar: saldosCalculados });
-              } else {
-                console.log(`skip updateCategory ${categoriaId} saldosPorCancelar: sin cambio`);
-              }
-            } catch (e) {
-              updateCategory(categoriaId, { saldosPorCancelar: saldosCalculados });
-            }
+            updateCategory(categoriaId, { saldosPorCancelar: saldosCalculados });
           }
         }
         
@@ -1854,26 +1807,17 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       const cleanedValue = value.toString().replace(/[^0-9.,-]/g, '');
       setEditingValues(prev => ({ ...prev, [cellKey]: cleanedValue }));
     } else {
-      // Sistema de auto-sync: sólo enviar si cambió (evita bucles)
-      try {
-        const cat = (projectData.categorias || []).find(c => c.id === categoriaId);
-        const currVal = cat ? cat[field] : undefined;
-        if (currVal !== value) {
-          if (updateCategory) {
-            updateCategory(categoriaId, { [field]: value });
-          }
-        }
-      } catch (e) {
-        if (updateCategory) updateCategory(categoriaId, { [field]: value });
+    // Sistema de auto-sync: cualquier cambio se guarda automáticamente
+    if (updateCategory) {
+        updateCategory(categoriaId, { [field]: value });
       }
-
-      // Mantener compatibilidad con estado local
-      setProjectData(prev => ({
-        ...prev,
-        categorias: prev.categorias.map(cat => 
-          cat.id === categoriaId ? { ...cat, [field]: value } : cat
-        )
-      }));
+    // Mantener compatibilidad con estado local
+    setProjectData(prev => ({
+      ...prev,
+      categorias: prev.categorias.map(cat => 
+        cat.id === categoriaId ? { ...cat, [field]: value } : cat
+      )
+    }));
     }
   };
 
@@ -2115,13 +2059,15 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       if (n.includes('despecie') || n.includes('despiece')) return 'text-red-600';
       if (n.includes('mano de obra')) return 'text-red-600';
       
-      // Rojo: Granito Y/O Cuarzo, Extras Y/O Eventos GyC, Tercializacion Facturada (1 y 2), Extras Y/O Eventos Terc. 1 y 2
-      if (n.includes('granito') || n.includes('cuarzo')) return 'text-red-600';
-      if (n.includes('extras y/o eventos gyc') || n === 'extras y/o eventos gyc') return 'text-red-600';
-      if ((n.includes('tercializacion 1 facturada') || n === 'tercialización 1 facturada') && !n.includes('no')) return 'text-red-600';
-      if (n.includes('extras y/o eventos terc. 1') && !n.includes('nf')) return 'text-red-600';
-      if ((n.includes('tercializacion 2 facturada') || n === 'tercialización 2 facturada') && !n.includes('no')) return 'text-red-600';
-      if (n.includes('extras y/o eventos terc. 2') && !n.includes('nf')) return 'text-red-600';
+      // Morado: Granito Y/O Cuarzo, Extras Y/O Eventos GyC (según captura)
+      if (n.includes('granito') || n.includes('cuarzo')) return 'text-indigo-600';
+      if (n.includes('extras y/o eventos gyc') || n === 'extras y/o eventos gyc') return 'text-indigo-600';
+      
+      // Oro (énfasis oscuro) para Tercialización y Extras Terc. facturadas
+      if ((n.includes('tercializacion 1 facturada') || n === 'tercialización 1 facturada') && !n.includes('no')) return 'text-amber-700';
+      if (n.includes('extras y/o eventos terc. 1') && !n.includes('nf')) return 'text-amber-700';
+      if ((n.includes('tercializacion 2 facturada') || n === 'tercialización 2 facturada') && !n.includes('no')) return 'text-amber-700';
+      if (n.includes('extras y/o eventos terc. 2') && !n.includes('nf')) return 'text-amber-700';
       
       // Verde: Flete, Logística, Extras y/o Eventos (sin GyC ni Terc)
       if (n.includes('flete') || n.includes('logística') || n.includes('logistica')) return 'text-green-600';
