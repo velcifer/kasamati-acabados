@@ -8,6 +8,7 @@
     "server": "nodemon server/index.js",
     "client": "cd client && npm start",
     "build": "cd client && npm install && npm run build",
+    "vercel-build": "cd client && npm install && npm run build",
     "start": "node server/index.js",
     "install-all": "npm install && cd client && npm install",
     "setup-db": "node setup-database.js",

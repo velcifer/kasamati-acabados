@@ -1,8 +1,11 @@
 // 🚀 VERCEL SERVERLESS FUNCTION - KSAMATI API
 // Este archivo es el punto de entrada para las funciones serverless de Vercel
 
-const app = require('../server/index');
+// Configurar variables de entorno antes de cargar el servidor
+// require('dotenv').config();
 
-// Vercel puede usar Express directamente
-// El app de Express funciona como handler automáticamente
-module.exports = app;
+// const app = require('../server/index');
+
+// // Vercel espera que exportemos el handler directamente
+// // Express funciona como handler automáticamente
+// module.exports = app;
