@@ -1579,6 +1579,7 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
               }
             });
             
+            
             // Actualizar las categorías por defecto con los valores existentes
             categoriasToMap = defaultCategories.map(defaultCat => {
               const existing = existingCategoriesMap.get(defaultCat.nombre.toLowerCase().trim());
