@@ -60,9 +60,20 @@ if (process.env.NODE_ENV === 'production' && !process.env.VERCEL && !process.env
 // 📊 Rutas API con verificación de BD
 app.get('/api/health', async (req, res) => {
   try {
-    const dbConnected = await testConnection();
-    const stats = dbConnected ? await getDatabaseStats() : null;
-    
+    // Usar estado cacheado primero para evitar llamadas constantes a la BD
+    const cached = require('./config/database').getCachedConnectionStatus();
+    let dbConnected = cached.connected;
+    let stats = null;
+
+    // Si no hay resultado cacheado (primer arranque) intentar conectar
+    if (cached.lastCheckedAt === 0) {
+      dbConnected = await testConnection();
+    }
+
+    if (dbConnected) {
+      stats = await getDatabaseStats();
+    }
+
     res.json({
       status: 'OK',
       message: 'Servidor KSAMATI funcionando correctamente',

@@ -35,24 +35,52 @@ const dbConfig = {
 // 🔗 POOL DE CONEXIONES
 const pool = mysql.createPool(dbConfig);
 
+// Simple cache para evitar llamadas repetidas muy seguidas a testConnection
+let _lastTestAt = 0;
+let _lastTestResult = null; // boolean
+// TTL para cache de testConnection (ms). Aumentado para uso local: 60s
+const TEST_CONNECTION_TTL = 60 * 1000;
+
 // 🧪 FUNCIÓN PARA PROBAR CONEXIÓN
 const testConnection = async () => {
+  // Si la última prueba fue reciente (TTL), devolver el resultado cacheado
   try {
+    const now = Date.now();
+    if (_lastTestAt && (now - _lastTestAt) < TEST_CONNECTION_TTL && _lastTestResult !== null) {
+      return _lastTestResult;
+    }
+
     const connection = await pool.getConnection();
     console.log('✅ Conexión a MySQL exitosa!');
     console.log(`📊 Base de datos: ${dbConfig.database}`);
     console.log(`🔗 Host: ${dbConfig.host}:${dbConfig.port}`);
-    
+
     // Probar una consulta básica
     const [rows] = await connection.execute('SELECT VERSION() as version');
     console.log(`🐬 MySQL versión: ${rows[0].version}`);
-    
+
     connection.release();
+    _lastTestAt = now;
+    _lastTestResult = true;
     return true;
   } catch (error) {
+    // Guardar resultado fallido en cache para evitar spam
+    _lastTestAt = Date.now();
+    _lastTestResult = false;
     console.error('❌ Error de conexión a MySQL:', error.message);
     return false;
   }
+};
+
+// Devuelve el estado cacheado de la conexión (no intenta conectar si está en cache)
+const getCachedConnectionStatus = () => {
+  return {
+    connected: !!_lastTestResult,
+    lastCheckedAt: _lastTestAt,
+    host: dbConfig.host,
+    port: dbConfig.port,
+    database: dbConfig.database
+  };
 };
 
 // 🔄 FUNCIÓN PARA EJECUTAR QUERIES CON RETRY
@@ -150,6 +178,7 @@ module.exports = {
   executeQuery,
   executeTransaction,
   getDatabaseStats,
+  getCachedConnectionStatus,
   dbConfig
 };
 

@@ -155,6 +155,21 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       }));
     setCobranzasFiles([...current, ...toAdd]);
   };
+
+  // Cuando se abre/cierra el popup de cobranzas, loggear y forzar foco/reflow
+  useEffect(() => {
+    if (cobranzasPopupOpen) {
+      try { console.debug('Popup Cobranzas opened - current cobranzas:', (projectData && projectData.cobranzas) ? projectData.cobranzas.map(c=>({id:c.id, fecha:c.fecha, monto:c.monto})) : projectData?.cobranzas); } catch(e){}
+      // Forzar reflow del popup
+      setTimeout(() => {
+        const node = cobranzasPopupRef?.current;
+        if (node) {
+          node.style.display = 'block';
+          node.offsetHeight;
+        }
+      }, 80);
+    }
+  }, [cobranzasPopupOpen]);
   const removeCobranzasFile = (id) => {
     setCobranzasFiles((prev) => prev.filter((f) => f.id !== id));
   };
@@ -1957,68 +1972,82 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
 
   // 💰 FUNCIONES PARA COBRANZAS
   // 🎯 HANDLERS PARA COBRANZAS - FORMATO MONETARIO CON DECIMALES
-  const handleCobranzaMontoFocus = (index, currentValue) => {
-    const cellKey = `cobranza-${index}-monto`;
+  // Ahora usamos id para las keys de edición para evitar desincronización por reorden o normalizaciones
+  const handleCobranzaMontoFocus = (index, id, currentValue) => {
+    const cellKey = `cobranza-${id}-monto`;
     // Mostrar valor raw sin formato para edición fácil
     const rawValue = parseMonetary(currentValue);
     setEditingCells(prev => ({ ...prev, [cellKey]: true }));
     setEditingValues(prev => ({ ...prev, [cellKey]: rawValue === 0 ? '' : rawValue.toString() }));
   };
 
-  const handleCobranzaMontoBlur = (index) => {
-    const cellKey = `cobranza-${index}-monto`;
-    setEditingCells(prev => {
+  const handleCobranzaMontoBlur = (index, id) => {
+    const cellKey = `cobranza-${id}-monto`;
+    // Extraer el valor raw y convertir
+    const rawValue = editingValues[cellKey] || '';
+    const numericString = extractNumericValue(rawValue);
+    const finalValue = parseFloat(numericString) || 0;
+
+    // Actualizar el estado usando búsqueda por id (asegura índice correcto)
+    setProjectData(prev => {
+      const newCobranzas = [...(prev.cobranzas || [])];
+      const idx = newCobranzas.findIndex(c => String(c?.id) === String(id));
+      if (idx === -1) {
+        // Si no existe, añadirlo al final
+        newCobranzas.push({ id: id || `tmp-${Date.now()}`, fecha: '', monto: finalValue });
+      } else {
+        newCobranzas[idx] = { ...newCobranzas[idx], monto: finalValue };
+      }
+
+      // 🔄 AUTO-SAVE: Guardar en el servicio
+      if (updateField) {
+        updateField('cobranzas', newCobranzas);
+        try { console.debug('Cobranzas updated (blur):', newCobranzas.map(c=>({id:c.id, fecha:c.fecha, monto:c.monto}))); } catch(e){}
+      }
+
+      return { ...prev, cobranzas: newCobranzas };
+    });
+
+    // Limpiar estados de edición
+    setEditingValues(prev => {
       const newState = { ...prev };
       delete newState[cellKey];
       return newState;
     });
-    
-    // Guardar el valor final: primero extraer el número correctamente, luego guardar
-    const rawValue = editingValues[cellKey] || '';
-    const numericString = extractNumericValue(rawValue);
-    const finalValue = parseFloat(numericString) || 0;
-    
-    // Actualizar el estado
-    setProjectData(prev => {
-      const newCobranzas = [...prev.cobranzas];
-      newCobranzas[index] = { ...newCobranzas[index], monto: finalValue };
-      
-      // 🔄 AUTO-SAVE: Guardar en el servicio
-      if (updateField) {
-        updateField('cobranzas', newCobranzas);
-      }
-      
-      return { ...prev, cobranzas: newCobranzas };
-    });
-    
-    // Limpiar el valor raw
-    setEditingValues(prev => {
+    setEditingCells(prev => {
       const newState = { ...prev };
       delete newState[cellKey];
       return newState;
     });
   };
 
-  const handleCobranzaChange = (index, field, value) => {
-      if (field === 'monto') {
+  const handleCobranzaChange = (index, field, value, id) => {
+    if (field === 'monto') {
       // Guardar valor raw mientras se edita (permitir puntos y comas)
-      const cellKey = `cobranza-${index}-monto`;
+      const cellKey = `cobranza-${id}-monto`;
       // Guardar el valor tal como lo escribe el usuario (con puntos y comas)
       const cleanedValue = value.toString().replace(/[^0-9.,-]/g, '');
       setEditingValues(prev => ({ ...prev, [cellKey]: cleanedValue }));
-      } else {
-      // Para otros campos (fecha), guardar directamente
+    } else {
+      // Para otros campos (fecha), actualizar buscando por id
       setProjectData(prev => {
-        const newCobranzas = [...prev.cobranzas];
-        newCobranzas[index] = { ...newCobranzas[index], [field]: value };
-      
-      // 🔄 AUTO-SAVE: Guardar en el servicio
-      if (updateField) {
-        updateField('cobranzas', newCobranzas);
-      }
-      
+        const newCobranzas = [...(prev.cobranzas || [])];
+        const idx = newCobranzas.findIndex(c => String(c?.id) === String(id));
+        if (idx === -1) {
+          // Si no existe, crear nueva fila
+          newCobranzas.push({ id: id || `tmp-${Date.now()}`, fecha: '', monto: '' });
+        } else {
+          newCobranzas[idx] = { ...newCobranzas[idx], [field]: value };
+        }
+
+        // 🔄 AUTO-SAVE: Guardar en el servicio
+        if (updateField) {
+          updateField('cobranzas', newCobranzas);
+          try { console.debug('Cobranzas updated (change):', newCobranzas.map(c=>({id:c.id, fecha:c.fecha, monto:c.monto}))); } catch(e){}
+        }
+
         return { ...prev, cobranzas: newCobranzas };
-    });
+      });
     }
   };
 
@@ -2763,18 +2792,29 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
           categorias: categoriasFinales,
         
           // 📅 SINCRONIZAR COBRANZAS GUARDADAS
-          // Si todas las filas tienen el mismo monto que el monto del contrato (estado antiguo),
+          // Normalizar incoming cobranzas: asegurar que cada fila tenga un `id`.
+          // Si todas las filas vienen con el mismo monto que el contrato (estado antiguo),
           // las reiniciamos a 0 para que aparezcan vacías.
           cobranzas: (() => {
-            const fromService = project.cobranzas || prev.cobranzas;
+            const fromService = Array.isArray(project.cobranzas) ? project.cobranzas : prev.cobranzas || [];
             if (Array.isArray(fromService) && fromService.length > 0) {
               const contrato = parseFloat(project.montoContrato || 0);
               const allEqualToContrato = fromService.every(c => (parseFloat(c?.monto) || 0) === contrato);
-              if (allEqualToContrato && contrato > 0) {
-                return fromService.map(c => ({ ...c, monto: 0 }));
-              }
+              const base = allEqualToContrato && contrato > 0
+                ? fromService.map(c => ({ ...c, monto: 0 }))
+                : fromService;
+
+              // Asegurar ids únicos (fallback) para evitar keys duplicadas o undefined
+              const normalized = base.map((c, i) => ({
+                id: c?.id ?? `${Date.now()}-${i}`,
+                fecha: c?.fecha ?? '',
+                monto: typeof c?.monto !== 'undefined' ? c.monto : 0,
+                ...c
+              }));
+              try { console.debug('Cobranzas synced from service:', normalized.map(x=>({id:x.id, fecha:x.fecha, monto:x.monto}))); } catch(e){}
+              return normalized;
             }
-            return fromService;
+            return [];
           })()
         };
       });
@@ -4251,10 +4291,10 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
       )}
 
       {/* 💚 POPUP: COBRANZAS DEL PROYECTO (desde Monto del Contrato) */}
-      {cobranzasPopupOpen && (
+    {cobranzasPopupOpen && (
         <>
           <div className="fixed inset-0 z-40 bg-black/20" onClick={() => setCobranzasPopupOpen(false)} />
-          <div ref={cobranzasPopupRef} className="fixed z-50 bg-white rounded-lg shadow-2xl w-[760px] max-w-[95vw] max-h-[85vh] overflow-y-auto border border-green-600" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
+  <div ref={cobranzasPopupRef} className="fixed z-50 bg-white rounded-lg shadow-2xl w-[760px] max-w-[95vw] max-h-[85vh] min-h-[240px] overflow-y-auto border border-green-600" style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)', minHeight: '240px', display: 'block' }}>
             {/* Header verde */}
             <div className="bg-green-600 text-white px-3 py-2 text-sm font-bold flex items-center justify-between rounded-t-lg">
               <span>💰 Cobranzas del Proyecto</span>
@@ -4271,14 +4311,19 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
               </div>
             </div>
 
-            <div className="p-3">
+            <div className="p-3" style={{ minHeight: '180px' }}>
               {/* Reutilizamos el mismo panel de cobranzas */}
               <div className="border border-gray-300 rounded">
             <div className="bg-green-600 text-white px-2 py-1 text-xs font-bold flex items-center justify-center">
               <span>💰 COBRANZAS DEL PROYECTO</span>
             </div>
-                <div className="p-1 bg-white">
-              <table className="w-full text-xs">
+                <div className="p-1 bg-white" style={{ minHeight: '220px' }}>
+                  <div style={{ maxHeight: '360px', overflowY: 'auto', minHeight: '220px' }}>
+              <table className="w-full text-xs table-fixed" style={{ tableLayout: 'fixed', borderCollapse: 'collapse' }}>
+                <colgroup>
+                  <col style={{ width: '110px' }} />
+                  <col />
+                </colgroup>
                 <tbody>
                   <tr>
                     <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 font-bold text-xs">MONTO DEL CONTRATO</td>
@@ -4294,31 +4339,56 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                       />
                     </td>
                   </tr>
-                  {projectData.cobranzas?.map((cobranza, index) => (
-                        <tr key={`popup-${cobranza.id}`}>
+                  {/* Botón para agregar nueva cobranza: crear fila localmente con id temporal y sincronizar */}
+                  <tr>
+                    <td colSpan={2} className="px-1 py-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newId = `tmp-${Date.now()}`;
+                          const current = projectData?.cobranzas || [];
+                          const updated = [...current, { id: newId, fecha: '', monto: '' }];
+                          // Actualizar UI inmediatamente
+                          setProjectData(prev => ({ ...prev, cobranzas: updated }));
+                          // Guardar vía servicio para normalización y persistencia
+                          if (updateField) updateField('cobranzas', updated);
+                        }}
+                        className="px-3 py-1 rounded bg-green-600 text-white text-xs hover:bg-green-700"
+                      >
+                        + Agregar Cobranza
+                      </button>
+                    </td>
+                  </tr>
+      {(
+        (projectData && Array.isArray(projectData.cobranzas) && projectData.cobranzas.length > 0)
+        ? projectData.cobranzas
+        : Array.from({ length: 13 }, (_, i) => ({ id: `fallback-${i}`, fecha: '', monto: '' }))
+      ).map((cobranza, index) => (
+        <tr key={`popup-${cobranza.id ?? index}`} style={{ minHeight: '34px' }}>
                           <td className="bg-gray-100 border border-gray-400 px-1 py-0.5 text-xs w-[110px] max-w-[110px]">
                       <input 
                         type="date" 
-                              className="w-full border-none outline-none text-xs px-1 py-0.5 bg-gray-100 text-center"
+                              className="w-full border border-transparent focus:border-gray-300 outline-none text-xs px-1 py-0.5 bg-gray-100 text-center text-black"
                         value={cobranza.fecha || ''}
-                        onChange={(e) => handleCobranzaChange(index, 'fecha', e.target.value)}
+                        onChange={(e) => handleCobranzaChange(index, 'fecha', e.target.value, cobranza.id)}
                       />
                     </td>
                           <td className="border border-gray-400 px-1 py-0.5 bg-white text-xs w-[110px] max-w-[110px]">
                       <input 
                         type="text" 
-                        className="w-full border-none outline-none text-xs px-1 py-0.5 text-left" 
+                        className="w-full border border-transparent focus:border-gray-300 outline-none text-xs px-1 py-0.5 text-left bg-transparent text-black placeholder-gray-400" 
                               placeholder="S/0.00"
                               value={(() => {
-                                const cellKey = `cobranza-${index}-monto`;
+                                const cellKey = `cobranza-${cobranza.id}-monto`;
                                 if (editingCells[cellKey]) {
                                   return editingValues[cellKey] || '';
                                 }
+                                if (cobranza.monto === '' || cobranza.monto === null || typeof cobranza.monto === 'undefined') return '';
                                 return formatMonetaryDisplay(cobranza.monto || 0);
                               })()}
-                        onChange={(e) => handleCobranzaChange(index, 'monto', e.target.value)}
-                        onFocus={() => handleCobranzaMontoFocus(index, cobranza.monto)}
-                        onBlur={() => handleCobranzaMontoBlur(index)}
+                        onChange={(e) => handleCobranzaChange(index, 'monto', e.target.value, cobranza.id)}
+                        onFocus={() => handleCobranzaMontoFocus(index, cobranza.id, cobranza.monto)}
+                        onBlur={() => handleCobranzaMontoBlur(index, cobranza.id)}
                       />
                     </td>
                   </tr>
@@ -4354,7 +4424,8 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                       Adjuntar archivos
                     </button>
                     <span className="text-xs text-gray-600">{cobranzasFiles.length}/10</span>
-                </div>
+                  </div>
+
                   {cobranzasFiles.length > 0 && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       {cobranzasFiles.map((f) => (
@@ -4363,14 +4434,15 @@ const ProyectoDetalle = ({ proyecto, onBack, projectNumber }) => {
                           <div className="flex items-center gap-2">
                             <button onClick={() => viewCobranzasFile(f)} className="px-2 py-0.5 rounded bg-blue-600 text-white text-xs hover:bg-blue-700">Ver</button>
                             <button onClick={() => removeCobranzasFile(f.id)} className="px-2 py-0.5 rounded bg-gray-700 text-white text-xs hover:bg-gray-800">Eliminar</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
-                      ))}
-            </div>
-                  )}
             </div>
           </div>
-        </div>
 
             {/* Footer */}
             <div className="px-3 py-2 bg-gray-50 border-t border-gray-200 flex justify-end gap-2 rounded-b-lg">

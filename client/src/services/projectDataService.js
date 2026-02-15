@@ -441,6 +441,20 @@ class ProjectDataService {
       return;
     }
 
+    // 🔧 NORMALIZAR: Si vienen cobranzas en los updates, asegurar que cada fila tenga un id
+    if (updates && Array.isArray(updates.cobranzas)) {
+      const now = Date.now();
+      updates.cobranzas = updates.cobranzas.map((c, i) => ({
+        // preservar campos existentes y asignar fallback para id/fecha/monto
+        ...c,
+  id: c && c.id ? c.id : `tmp-${now}-${i}`,
+  fecha: (c && c.fecha) ? c.fecha : (c && c.fecha === '' ? '' : ''),
+  // Dejar monto como string vacío por defecto para que la UI muestre celda vacía
+  monto: (c && c.monto !== undefined && c.monto !== null && c.monto !== '') ? c.monto : ''
+      }));
+      try { console.debug('projectDataService.normalize cobranzas for update:', updates.cobranzas.map(x=>({id:x.id, fecha:x.fecha, monto:x.monto}))); } catch(e){}
+    }
+
     // Guardar los valores que vienen desde ProyectoDetalle (con totales completos)
     const presupuestoDesdeDetalle = updates.presupuestoProyecto;
     const balanceDelPresupuestoDesdeDetalle = updates.balanceDelPresupuesto;
